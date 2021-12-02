@@ -1,5 +1,5 @@
 ---
-title: "20190117_workflow_AH7&AG7combined"
+title: "scRNAseq_analysis"
 author: "R_Krautz"
 date: "17/01/2019"
 output: html_document
@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## [-1.0.] Install or change to correct Seurat version
-#### previous "Seurat_3.0.2.tar.gz","Seurat_2.3.4.tar.gz"
+#### "Seurat_2.3.4.tar.gz" required for this workflow
 ```{r}
 base::unloadNamespace("Seurat")
 utils::remove.packages("Seurat")
@@ -57,54 +57,6 @@ base::options(max.print = 100L)
 
 utils::packageVersion('Seurat')
 ```
-
-##<<necessary?_start>>
-
-## [0.1.] Load conda environment, python & check for 'umap-learn' module
-#### on console: 'conda env list', 'conda list -n bioinf_py37'
-```{r}
-reticulate::conda_list(
-    conda = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/condabin/conda"
-  )
-reticulate::use_condaenv(
-    condaenv = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/envs/bioinf_py37/",
-    conda = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/condabin/conda",
-    required = TRUE
-  )
-reticulate::py_config()
-
-pks <- reticulate::py_config() %>%
-  .[["numpy"]] %>%
-  .[["path"]] %>%
-  base::dirname()
-
-pk = "umap" #"pyprojroot"
-base::list.dirs(path = pks) %>%
-  stringr::str_subset(pk)
-```
-
-## [0.2.] Save & load environment
-#### previous (1.) '20190415.RData' (2.) '20190614.RData' (3.) '20190614_20190415repro.RData'
-```{r eval=FALSE}
-base::save.image(
-  base::paste0(
-      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
-      "20211129_rerun.RData"
-    ),
-    compress = TRUE
-  )
-```
-
-```{r}
-base::load(
-  base::paste0(
-      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
-      "20211129_rerun.RData"
-    )
-  )
-```
-
-##<<necessary?_end>>
 
 ##---------------------##
 ##----Prerequisites----##
@@ -183,8 +135,8 @@ reader <- function(object,genes,impute){
 ```
 
 ## [0.4.] Helper function to visualize the expression distribution of the selected genes in their clusters
-#### Note: address strip labels: g1$grobs[[62]]$grobs[[1]]$children[[2]]$children[[1]]$label
-#### Note: addess strip colors: g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill
+#### address strip labels: g1$grobs[[62]]$grobs[[1]]$children[[2]]$children[[1]]$label
+#### addess strip colors: g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill
 ```{r}
 plotter <- function(df,pal){
     plot <- ggplot2::ggplot(
@@ -373,7 +325,7 @@ plotOnTsne <- function(comb, title, ran=NULL, leg="right", coef = 0.25){
 
 ## [1.0.] Read in AH7 files
 #### evaluate with 'utils::str(ah7.data)', 'ah7.data[1:10,1400:1405] %>% base::as.matrix'
-#### previous "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod"
+#### "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod/"
 ```{r}
 dataset = "AH7"
 
@@ -389,7 +341,7 @@ ah7.data <- Seurat::Read10X(
 
 ## [1.1.] Read in AG7 files
 #### evaluate with 'ag7.data[1:10,1:5] %>% as.matrix'
-#### previous "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod"
+#### "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod/"
 ```{r}
 dataset = "AG7"
 
@@ -570,35 +522,6 @@ base::range(comb.data)
 
 ## [2.0.] Integrated analysis
 ```{r}
-inps <- Seurat::RunTSNE(
-    object = inps,
-    reduction.use = "cca.aligned",
-    dims.use = 1:10,
-    do.fast = TRUE
-  )
-inps <- Seurat::FindClusters(
-    object = inps,
-    reduction.type = "cca.aligned",
-    dims.use = 1:10,
-    save.SNN = TRUE
-  )
-```
-
-#### code chunk added 20211110
-```{r}
-reticulate:::ensure_python_initialized()
-reticulate:::is_python_initialized()
-reticulate::py_module_available(module ="umap")
-
-inps_ <- Seurat::RunUMAP(
-    object = inps,
-    reduction.use = "cca.aligned",
-    dims.use = 1:10,
-    do.fast = TRUE
-  )
-```
-
-```{r}
 seed.tsne = 1L
 starts = 100L
 iter = 10L
@@ -628,6 +551,15 @@ inps <- Seurat::FindClusters(
   )
 ```
 
+```{r}
+inps_ <- Seurat::RunUMAP(
+    object = inps,
+    reduction.use = "cca.aligned",
+    dims.use = 1:10,
+    do.fast = TRUE
+  )
+```
+
 ## [2.1.] Visualize clustering
 ```{r}
 plot_1 <- Seurat::TSNEPlot(
@@ -645,7 +577,7 @@ plot_2 <- Seurat::TSNEPlot(
 cowplot::plot_grid(plot_1,plot_2)
 ```
 
-## [2.2.] Read out all tSNE data
+## [2.2.] Read out tSNE data
 ```{r}
 dim.1 = 1L
 dim.2 = 2L
@@ -679,7 +611,7 @@ cells.tsne <- Seurat::GetDimReduction(
     )
 ```
 
-#### Read out all UMAP data
+#### Read out UMAP data
 ```{r}
 dim.1 = 1L
 dim.2 = 2L
@@ -730,8 +662,7 @@ cells.tsne <- dplyr::left_join(
 base::remove(cells.prot)
 ```
 
-##<<necessary?_start>>
-
+## [2.4.] Visualize cell contributions to clusters
 ```{r}
 clus.order <- base::c(3,4,7,2,0,1,9,11,8,10,5,6)
 
@@ -790,9 +721,6 @@ cells.tsne %>%
   )
 ```
 
-##<<necessary?_end>>
-
-## [2.4.] Visualize cell contributions to clusters
 ```{r}
 clus.order <- base::c(3,4,7,2,0,1,9,11,8,10,5,6)
 
@@ -942,12 +870,11 @@ ggplot2::ggplot(
 ```
 
 ## [2.8.] Save plot
-#### previous "20190123_expressionTSNE_AG7AH7combined"
 ```{r}
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_AG7AH7combined",

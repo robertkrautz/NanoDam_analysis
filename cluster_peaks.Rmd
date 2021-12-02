@@ -1,5 +1,5 @@
 ---
-title: "20190424_workflow_clustering"
+title: "cluster_peaks"
 author: "R_Krautz"
 date: "05/12/2018"
 output: html_document
