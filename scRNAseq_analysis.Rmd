@@ -915,7 +915,7 @@ Seurat::FeaturePlot(
 base::saveRDS(
     object = inps,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_inps",
         "_combinedDataset_AH7AG7",
@@ -928,15 +928,15 @@ base::saveRDS(
 ```{r}
 inps <- base::readRDS(
   file = base::list.files(
-        path = here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        path = here::here("results/"),
         full.names = TRUE
       ) %>%
-    stringr::str_subset("_inps_combinedDataset_AH7AG7")
+    stringr::str_subset("*inps*")
   )
 ```
 
-## [2.10.] Read out markers for all clusters
-#### default test used is "wilcoxon" (previous "tobit")
+## [2.11.] Read out markers for all clusters
+#### default test used is "wilcoxon"
 ```{r}
 clusSel <- base::c(0:4,7:11)
 
@@ -975,7 +975,7 @@ clusStats <- purrr::map(
   dplyr::bind_rows()
 ```
 
-## [2.11.] Evaluate
+## [2.12.] Evaluate
 ```{r}
 clusStats %>%
   dplyr::group_by(clus) %>%
@@ -997,18 +997,6 @@ Seurat::FindMarkers(
       rownames = "gene"
     ) %>% 
   dplyr::arrange(dplyr::desc(avg_logFC))
-
-##<<necessary?_start>>
-
-clusTobit %>%
-  dplyr::filter(
-      avg_logFC<=-1 | avg_logFC>=1
-    )
-
-clusTobit %>%
-  dplyr::filter(p_val_adj<0.05)
-
-##<<necessary?_end>>
 
 clusStats %>%
   dplyr::filter(p_val_adj<0.05) %>%
@@ -1037,12 +1025,12 @@ clusStats %>%
     )
 ```
 
-## [2.12.] Save, load & write clusStats
+## [2.13.] Save, load & write clusStats
 ```{r}
 base::saveRDS(
   object = clusStats,
   file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clusStats_excl56",
         ".rds"
@@ -1051,27 +1039,10 @@ base::saveRDS(
   )
 ```
 
-##<<necessary?_start>>
-
-```{r}
-base::saveRDS(
-  object = clusTobit,
-  file = base::paste0(
-    here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
-      base::format(base::Sys.time(), "%Y%m%d"),
-      "_clusTobit_excl56",
-      ".rds"
-    ),
-    compress = TRUE
-  )
-```
-
-##<<necessary?_end>>
-
 ```{r}
 clusStats <- base::readRDS(
     file = base::list.files(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         full.names = TRUE
       ) %>%
     stringr::str_subset("_clusStats_excl56.rds")
@@ -1082,7 +1053,7 @@ clusStats <- base::readRDS(
 utils::write.table(
     x = clusStats,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clusStats_excl56",
         ".tsv"
@@ -1095,84 +1066,24 @@ utils::write.table(
   )
 ```
 
-##<<necessary?_start>>
-
-## [2.15.] Evaluate
-#### added: 2019-11-08
-```{r}
-gene_overview <- base::readRDS(
-  file = base::list.files(
-        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD"),
-        full.names = TRUE
-      ) %>%
-    stringr::str_subset("rds")
-  )
-
-gene_mis <- gene_overview %>%
-  dplyr::filter(
-      postTF_FBgn == 0L &
-      postTF_sym == 1L &
-      postTF_com == 1L
-    ) %>%
-  dplyr::pull(genes)
-
-clusTF %>%
-  dplyr::filter(
-      gene %in% gene_mis &
-      avg_logFC > 0
-      #clus %in% base::c(3)
-    ) %>%
-  #dplyr::distinct(gene, .keep_all=TRUE)
-  utils::write.table(
-    x = .,
-    file = base::paste0(
-        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
-        base::format(base::Sys.time(), "%Y%m%d"),
-        "_postTF",
-        "_differences",
-        "_expression",
-        ".tsv"
-      ),
-    quote = FALSE,
-    sep = "\t",
-    eol = "\n",
-    row.names = FALSE,
-    col.names = TRUE
-  )
-```
-
-##<<necessary?_end>>
-
 ##---------------------------------##
 ##----Identify_sign_NanoDam_TFs----##
 ##---------------------------------##
 
 ## [3.0.] Read in 'mergeTF'
-#### see '[2.8.1.]' in '20181211_workflow_peakAnno.Rmd'
-##<<necessary?_start>>
-#### added: 2019-11-08
+#### see [2.10.]-[2.11.] in 'annotate_peaks.Rmd'
 ```{r}
 mergeTF <- base::readRDS(
   file = base::list.files(
-        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
-        full.names = TRUE
-      ) %>%
-    stringr::str_subset('postAnno')
-  )
-```
-##<<necessary?_end>>
-
-#### previous: "20191108_[...]", "20200309_[...]", "20211129_[...]"
-```{r}
-mergeTF <- base::readRDS(
-  file = base::list.files(
-        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        here::here("data/"),
         full.names = TRUE
       ) %>%
     stringr::str_subset('mergeTF') %>%
     stringr::str_subset('20211129')
   )
 ```
+
+##<<bookmark>>
 
 ## [3.1.] Test overlap 1
 #### Read out TFs of NanoDam k-means clusters
