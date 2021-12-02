@@ -1,0 +1,1162 @@
+---
+title: "20181211_workflow_peakAnno"
+author: "R_Krautz"
+date: "11/12/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [0.0.] Load necessary packages
+```{r message=FALSE}
+base::library(tidyverse)
+base::library(magrittr)
+base::library(here)
+base::library(bedr)
+```
+
+## [0.1.] Save and load the environment
+#### previous "20190426.RData", "20190426_copy.RData" 
+```{r}
+base::save.image(
+    base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        "20211128_rerun.RData"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+base::load(
+    base::paste0(
+      here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+      "20211128_rerun.RData"
+    )
+  )
+```
+
+##---------------------##
+##----Prerequisites----##
+##---------------------##
+
+## [1.0.] annotater() function
+#### Note: see '[2.2.]' of '20180711_MouseCortex/src/20180807_workflow_peakAnno.Rmd'
+```{r}
+annotater <- function(
+  df,
+  chosenEngine = "bedtools",
+  tssRef = anno,
+  cols = base::c(
+      chr = "V1",
+      start = "V2",
+      end = "V3",
+      name ="V4",
+      tssChr ="V5",
+      tssStart = "V6",
+      tssEnd = "V7",
+      tssID = "V8",
+      nd = "V9",
+      tssStrand = "V10",
+      ensembl_gene_id = "V11",
+      external_gene_name = "V12",
+      gene_biotype = "V13",
+      entrezgene = "V14"
+    )
+  ){
+    
+    out <- tryCatch(
+        {
+          if(!bedr::check.binary(chosenEngine)){
+            stop(
+              base::paste0(
+                  "Chosen engine:\t",chosenEngine,"\tnot available.\n"
+                )
+            )
+          }else{
+            
+            is.df.valid <- df %>%
+              base::as.data.frame() %>%
+              bedr::is.valid.region(
+                  check.chr = FALSE
+                )
+            
+            dfVal <- df %>%
+              dplyr::filter(
+                  dplyr::row_number() == base::which(is.df.valid)
+                ) %>% 
+              base::as.data.frame()
+            
+            dfSort <- bedr::bedr(
+                engine = chosenEngine,
+                input = base::list(i=dfVal),
+                method = "sort",
+                params = "",
+                check.chr = FALSE,
+                check.valid = TRUE,
+                check.sort = FALSE
+              )
+            
+            dfAnno <- bedr::bedr(
+                engine = chosenEngine,
+                input = base::list(a = dfSort),
+                method = "closest",
+                params = base::paste("-b", tssRef, sep = " "),
+                check.chr = FALSE,
+                check.valid = TRUE,
+                check.sort = FALSE
+              )
+            
+            dfAnno %>%
+              tibble::as_tibble() %>%
+              dplyr::rename(.,!!!cols) %>% 
+              dplyr::arrange(chr, start)
+          }
+        },
+      error = function(cond){
+          base::message(cond)
+          return(NA)
+        },
+      warning = function(cond){
+          base::message(cond)
+          return(NA)
+        }
+      )
+    return(out) 
+  }
+```
+
+## [1.1.] Helper functions for injecting additional y-axis
+#### Note: see '[5.14.]' in '20181205_workflow_clustering.Rmd'
+```{r}
+sequencer <- function(clus,start,end,gap=3L){
+    return(
+      base::seq(
+        start + gap*(clus-1),
+        end + gap*(clus-1)
+      )
+    )
+  }
+```
+
+```{r}
+seqAdd <- function(df, gap=30L){
+  return(
+    df %>%
+      dplyr::mutate(
+          clus = base::as.integer(clus),
+          end = base::cumsum(amount),
+          start = end-amount+1,
+          seq = purrr::pmap(
+            .l = base::list(
+                clus,start,end
+              ),
+            .f = .GlobalEnv$sequencer,
+            gap = gap
+          )
+        ) %>%
+      tidyr::unnest(cols = "seq") %>%
+      dplyr::select(seq) %>%
+      base::unlist() %>%
+      base::unname()
+    )
+}
+```
+
+## [1.2.] Annotation reference
+#### Based on TSS definitions in '20180819_workflow_StreamID.Rmd'
+```{r}
+fn <- base::paste0(
+     here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+    "BDGP6.bm.TssBiomart.ProteinCoding.bed"
+  )
+
+if(file.exists(fn)){
+      anno <- fn
+  }
+```
+
+##<<unnecessary_start>>
+
+## [1.3.] Load resKclus & resK
+#### see '[5.19.]' & '[5.12.]' in '20181205_workflow_clustering.Rmd'
+```{r eval=FALSE,message=FALSE}
+resKclus <- base::readRDS(
+    file = base::paste0(
+         here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        "20181207_resKclus_FDR25_seed0_k9_zscores.rds"
+      )
+  )
+
+resK <- base::readRDS(
+  file = base::paste0(
+       here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+      "20181207_resK_FDR25_seed0_k9_zscores.rds"
+    )
+  )
+```
+
+##<<unnecessary_end>>
+
+## [1.4.] Load resKclus & resK
+#### previous '20190424_resKclus_DichaeteOnly_zscores_clus6_FDR25_seed0.rds'
+#### previous '20190424_resK_DichaeteOnly_zscores_clus6_FDR25_seed0.rds'
+```{r}
+resKclus <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('20211126_resKclus')
+  )
+
+resK <- base::readRDS(
+  file = base::list.files(
+         here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('20211126_resK_')
+  )
+```
+
+## [1.5.] Load FlyTFs
+#### see 'https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html'
+#### dplyr::filter(tfs,symbol %in% base::c("grh","D","ey"))
+```{r}
+tfs <- readr::read_delim(
+      file = base::paste0(
+          here::here("resources/"),
+          "FlyTFv1.all_candidates.csv"
+        ),
+      delim = "\t",
+      col_names = TRUE,
+      col_types = "cccccc",
+      quote = ""
+    ) %>%
+  dplyr::filter(
+      !base::is.na(verdict_TF)
+    )
+```
+
+## [1.6.] Prerequisites
+```{r}
+groups <- tibble::tibble(
+  profile = base::c(
+      "DichaeteGal4_DichaeteGFP",
+      "DichaeteGal4_GrainyheadGFP",
+      "DichaeteGal4_EyelessGFP",
+      "OgreGal4_DichaeteGFP",
+      "OgreGal4_EyelessGFP"
+    )
+  )
+repl <- tibble::tibble(
+  sym = base::c("D","Grh","Ey"),
+  profile = base::c(
+      "DichaeteGal4_DichaeteGFP",
+      "DichaeteGal4_GrainyheadGFP",
+      "DichaeteGal4_EyelessGFP"
+    )
+  )
+sel_chrom <- base::c(
+    "2L", "2R", "3L", "3R", "4","MT", "X", "Y"
+  )
+```
+
+##<<necessary?_start>>
+
+## [1.7.] Load postAnno
+```{r}
+postAnno <- base::readRDS(
+  file = base::list.files(
+        path = here::here("data/20190901_DichaeteGal4_DGrhEy_clustering"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("postAnno")
+  )
+```
+
+##<<necessary?_end>>
+
+##----------------------##
+##----Data_wrangling----##
+##----------------------##
+
+## [2.0.] Inject additional y-axis
+#### Note: According to '[5.21.]' in '20181205_workflow_clustering.Rmd'
+```{r}
+preAnno__ <- resKclus %>%
+  dplyr::mutate(
+      kclus = base::factor(
+        x = kclus,
+        levels = base::seq(1,base::nrow(resK$centers)),
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(kclus,sil_width)
+
+clusDis <- resKclus %>%
+  dplyr::group_by(kclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus = kclus)
+
+preAnno_ <- dplyr::mutate(
+    .data = preAnno__,
+    yInj = .GlobalEnv$seqAdd(clusDis, gap = 100L),
+    cred = stringr::str_c(kclus,yInj,sep = "_")
+  )
+```
+
+## [2.1.] Evaluate injected y-axis
+```{r}
+resKclus %>%
+  dplyr::distinct(chr,start,end) %>%
+  base::nrow()
+
+preAnno_ %>%
+  dplyr::group_by(kclus) %>%
+  dplyr::filter(
+      dplyr::row_number() %in% base::c(1,dplyr::n())
+    )
+```
+
+## [2.2.] Prepare annotation
+```{r}
+coln <- base::c(
+    "chr","start","end","cred"
+  )
+preAnno <- dplyr::select(preAnno_,coln)
+```
+
+## [2.3.] Annotate peaks
+```{r}
+postAnno <- .GlobalEnv$annotater(preAnno)
+```
+
+##<<necessary?_start>>
+
+## [2.4.] Subset data
+```{r}
+subseter <- function(df){
+  return(
+    df %>%
+      tibble::as_tibble() %>%
+      dplyr::filter(dplyr::row_number() == 1L)
+    )
+  }
+
+postAnno %>%
+  dplyr::group_by(chr,start,end) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+      newData = purrr::map(
+        .x = data,
+        .f = .GlobalEnv$subseter
+      )
+    ) %>%
+  dplyr::select(-data) %>%
+  tidyr::unnest(cols = newData)
+```
+
+## [2.4.] Inject y-axis ranks
+```{r}
+clusDis <- postAnno %>%
+  dplyr::group_by(kclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus = kclus)
+
+postAnno %>%
+  dplyr::mutate(
+    yInj = .GlobalEnv$seqAdd(clusDis, gap=100L)
+  )
+```
+
+##<<necessary?_end>>
+
+## [2.4.] Subset data
+```{r}
+preTF <- dplyr::distinct(
+    .data = postAnno,
+    chr,start,end,
+    .keep_all = TRUE
+  )
+```
+
+## [2.5.] Subset peaks for TF-association
+##<<necessary?_start>>
+#### evaluate with 'dplyr::filter(postTF,external_gene_name == "grh")'
+##<<necessary?_end>>
+```{r}
+postTF <- preTF %>%
+  dplyr::filter(
+      ensembl_gene_id %in% tfs$FBgn
+    ) %>%
+  dplyr::mutate(
+    yInj = stringr::str_replace(
+        string = name,
+        pattern = '^.*_(.*)$',
+        replacement = '\\1'
+      ),
+    kclus = stringr::str_replace(
+        string = name,
+        pattern = '^(.*)_.*$',
+        replacement = '\\1'
+      )
+    )
+```
+
+##<<necessary?_start>>
+
+## [2.5.2.] Evaluate
+#### inserted 2020-03-09
+```{r}
+#### ensembl_gene_id = "FBgn0259211"
+preTF %>%
+  dplyr::filter(external_gene_name == "grh")
+#### ensembl_gene_id = "FBgn0004586"
+tfs %>%
+  dplyr::filter(symbol == "grh")
+#### clus3 peak in 'grh' associated with 'olf186-F'
+preTF %>%
+  dplyr::filter(
+    chr == "2R" &
+    start >= 17834300 &
+    start <= 17835000
+  )
+
+##[1.]
+postTF_FBgn <- preTF %>%
+  dplyr::filter(
+      ensembl_gene_id %in% tfs$FBgn
+    ) %>%
+  mutate(
+    kclus = stringr::str_replace(name,'^(.*)_.*$','\\1'),
+    yInj = stringr::str_replace(name,'^.*_(.*)$','\\1')
+  )
+postTF_FBgn_genes <- postTF_FBgn %>%
+  dplyr::distinct(external_gene_name) %>%
+  dplyr::pull(external_gene_name)
+
+##[2.]
+postTF_sym <- preTF %>%
+  dplyr::filter(
+      external_gene_name %in% tfs$symbol
+    ) %>%
+  mutate(
+    kclus = stringr::str_replace(name,'^(.*)_.*$','\\1'),
+    yInj = stringr::str_replace(name,'^.*_(.*)$','\\1')
+  )
+postTF_sym_genes <- postTF_sym %>%
+  dplyr::distinct(external_gene_name) %>%
+  dplyr::pull(external_gene_name)
+
+##[3.]
+postTF_com <- preTF %>%
+  dplyr::filter(
+      (external_gene_name %in% tfs$symbol) |
+      (ensembl_gene_id %in% tfs$FBgn)
+    ) %>%
+  mutate(
+    kclus = stringr::str_replace(name,'^(.*)_.*$','\\1'),
+    yInj = stringr::str_replace(name,'^.*_(.*)$','\\1')
+  )
+postTF_com_genes <- postTF_com %>%
+  dplyr::distinct(external_gene_name) %>%
+  dplyr::pull(external_gene_name)
+
+##[4.]
+postTF <- postTF_com
+```
+
+## [2.5.3.] Identify overlaps
+#### inserted 2020-03-09
+```{r}
+input_comb <- base::list(
+    postTF_FBgn = postTF_FBgn_genes,
+    postTF_sym = postTF_sym_genes,
+    postTF_com = postTF_com_genes
+  )
+
+uni <- input_comb %>%
+  base::unlist() %>%
+  base::unique()
+base::names(input_comb)
+
+gene_overview <- tibble::tibble(
+    genes = uni
+  ) %>%
+  dplyr::mutate(
+    `postTF_FBgn` = dplyr::case_when(
+        genes %in% input_comb[[1]] ~ 1L,
+        TRUE ~ 0L
+      ),
+    `postTF_sym` = dplyr::case_when(
+        genes %in% input_comb[[2]] ~ 1L,
+        TRUE ~ 0L
+      ),
+    `postTF_com` = dplyr::case_when(
+       genes %in% input_comb[[3]] ~ 1L,
+        TRUE ~ 0L
+    )
+  )
+```
+
+## Evaluation
+```{r}
+gene_overview %>%
+  dplyr::group_by(
+      postTF_FBgn,postTF_sym,postTF_com
+    ) %>% 
+  dplyr::summarise(n = dplyr::n())
+```
+
+## [2.5.4.] Write out differences
+#### inserted 2020-03-09
+```{r}
+df <- gene_overview %>%
+  dplyr::filter(
+    !(postTF_FBgn == 1L &
+    postTF_sym == 1L &
+    postTF_com == 1L)
+  )
+
+base::saveRDS(
+    object = gene_overview,
+    file = base::paste0(
+          here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_postTF",
+          "_differences",
+          ".rds"
+        ),
+    compress = TRUE
+  )
+
+utils::write.table(
+    x = df,
+    file = base::paste0(
+        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_postTF",
+        "_differences",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+##<<necessary?_end>>
+
+## [2.6.] Data wrangling
+```{r}
+var <- base::c(
+    "chr","start","end",
+    "yInj","tssChr","tssStart",
+    "tssEnd","tssStrand","ensembl_gene_id",
+    "external_gene_name","kclus"
+  )
+
+sortTF <- postTF %>%
+  dplyr::select(!!!var) %>% 
+  dplyr::mutate(
+      yInj = base::as.integer(yInj),
+      kclus = base::as.integer(kclus)
+    ) %>% 
+  dplyr::arrange(yInj)
+```
+
+## [2.7.] TFs identified to be expressed in INPs according to scRNASeq
+#### see [8.4.] in '20190117_workflow_AH7&AG7combined.Rmd'
+```{r}
+clus <- base::list()
+clus[[2]] <- base::c(
+    "dpn","ase","cas",
+    "E(spl)mbeta-HLH","slp2","aop",
+    "mip120","opa","Optix",
+    "crol","zfh2","jumu",
+    "Oli","lilli","Mad"
+  )
+clus[[3]] <- base::c(
+    "su(Hw)","Rbf","hth",
+    "Lim1","phol","Eip75B",
+    "ph-p","hng1","bigmax",
+    "MTA1-like","sna","E(bx)",
+    "lilli","SoxN","mod",
+    "apt","zfh2","E2f1",
+    "Su(var)2-10","ktub","lid",
+    "Optix"
+  )
+clus[[4]] <- base::c(
+    "Pep","ham","lilli",
+    "hng3","slp2","ewg",
+    "noc","Myb","Smox",
+    "zfh2","crp","Hsf",
+    "Eip75B","hth","apt",
+    "SoxN","pros","Su(var)205",
+    "klu","sd","corto"
+  )
+clus[[5]] <- base::c(
+    "ey","fd102C","Gug",
+    "Su(H)","Psc","Eip75B",
+    "ham","crp","Lim1",
+    "BEAF-32","opa","crc",
+    "run","E2f1","Mnt","scro",
+    "hng3","zfh2"
+  )
+clus[[6]] <- base::c(
+    "hth","aop","run",
+    "stwl","Lim1","trx",
+    "Eip75B","sd","Optix",
+    "apt","ham","corto",
+    "ey","ph-p","Gug",
+    "E2f1","pros","D",
+    "slp2","E(spl)m8-HLH","hbn",
+    "tap","SoxN","HmgZ",
+    "CrebA","scrt","noc",
+    "wor","klu","emc",
+    "opa"
+  )
+```
+
+## [2.8.] Save sortTF
+#### see [7.0.] in '20190424_workflow_clustering.Rmd'
+```{r}
+seed = 0L #1L
+base::set.seed(seed)
+clusChos = 6L #5L
+algr = "Hartigan-Wong"
+
+base::saveRDS(
+    object = sortTF,
+    file = base::paste0(
+       here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_sortTF_DichaeteOnly_zscores",
+      "_FDR", FDR,
+      "_clus", clusChos,
+      "_algr", stringr::str_replace(algr, "-",""),
+      "_seed", seed,
+      ".rds"
+    ),
+    compress = TRUE
+  )
+```
+
+## [2.9.] Evaluation
+#### Sum amount of TF-associated peaks per cluster
+```{r}
+sortTF %>%
+  dplyr::group_by(kclus) %>%
+  dplyr::summarise(
+      amount = dplyr::n()
+    )
+
+sortTF %>%
+  dplyr::filter(
+      external_gene_name %in% base::c("scro","hbn")
+    )
+```
+
+## [2.10.] Combine resKclus & sortTF
+#### previous: 'dplyr::select(2:4,7:13)'
+```{r}
+##<<necessary?_start>>
+# vars <- base::c(
+#     peakChr = "chr",
+#     peakStart = "start",
+#     peakEnd = "end"
+#   )
+##<<necessary?_end>>
+vars <- dplyr::vars(
+    "chr","start","end","kclus",
+    tidyselect::contains("Dichaete")
+  )
+
+mergeTF <- resKclus %>%
+  dplyr::select(!!!vars) %>%
+  dplyr::left_join(
+      x = sortTF,
+      y = .,
+      by = base::c("chr","start","end","kclus"),
+      all.x = TRUE
+    ) %>%
+  dplyr::arrange(yInj)
+```
+
+##<<necessary?_start>>
+
+## [2.8.1.] Write out individual files
+#### inserted 2019-11-08
+```{r}
+FDR = 25L
+seed = 0L
+
+for(i in 1:6){
+  tmp <- mergeTF %>%
+    dplyr::filter(kclus == i) %>%
+    dplyr::select(4,1:3,10,9,5:8,12:14)
+  
+  fn <-base::paste0(
+       here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_postAnno",
+      "_mergeTF",
+      "_FDR", FDR,
+      "_seed", seed,
+      "_kclus", i,
+      ".tsv"
+    )
+  
+  write.table(
+      x = tmp,
+      file = fn,
+      quote = FALSE,
+      sep = "\t",
+      eol = "\n",
+      row.names = FALSE,
+      col.names = TRUE
+    )
+  }
+```
+
+```{r}
+write.table(
+    x = mergeTF,
+    file = base::paste0(
+       here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_postAnno",
+      "_mergeTF",
+      "_FDR", FDR,
+      "_seed", seed,
+      "_all",
+      ".tsv"
+    ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+##<<necessary?_end>>
+
+```{r}
+seed = 0L #1L
+base::set.seed(seed)
+clusChos = 6L #5L
+algr = "Hartigan-Wong"
+
+base::saveRDS(
+    object = mergeTF,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_postAnno",
+        "_mergeTF",
+        "_FDR", FDR,
+        "_clus", clusChos,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        "_all",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+## [2.11.] Prepare data for plotting
+```{r}
+plotTF_ <- mergeTF %>%
+  tidyr::gather(
+      key = "track",
+      value = "bindInt",
+      -chr, -start, -end,
+      -kclus, -yInj, -tssChr,
+      -tssStart, -tssEnd, -tssStrand,
+      -ensembl_gene_id,
+      -external_gene_name,
+    ) %>%
+  dplyr::mutate(
+    track = base::factor(
+        x = track,
+        levels = repl$profile,
+        ordered = TRUE
+      ),
+    chr = base::factor(
+        x = chr,
+        levels = sel_chrom,
+        ordered = TRUE
+      ),
+    id = stringr::str_c(
+        chr,start,end,sep="_"
+      ),
+    sym = purrr::map_chr(
+      .x = track,
+      .f = function(tr){
+        return(
+          repl %>%
+            dplyr::filter(profile==tr) %>%
+            dplyr::pull(sym)
+          )
+        }
+      ),
+    sym = base::factor(
+        x = sym,
+        levels = repl$sym,
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(chr,start,sym)
+
+idLevels <- plotTF_ %>%
+  dplyr::distinct(id) %>%
+  dplyr::pull(id)
+
+plotTF <- plotTF_ %>%
+  dplyr::mutate(
+    id = base::factor(
+      x = id,
+      levels = idLevels,
+      ordered = TRUE
+    )
+  )
+
+# rangE <- plotTF %$%
+#   range(bindInt)
+rangE <- base::c(-2,2)
+```
+
+## [2.12.] Evaluation
+```{r}
+plotTF %>%
+  dplyr::filter(
+      external_gene_name %in% base::c("scro","grh","hbn")
+    )
+```
+
+## [2.13.] Data visualization
+```{r}
+FDR = 25L
+seed = 0L
+
+for(i in base::seq(1L,6L,1L)){
+  
+    tmp <- dplyr::filter(plotTF,kclus==i)
+    
+    y_labels <- tmp %>%
+      dplyr::distinct(id, .keep_all = TRUE) %>% 
+      dplyr::select(external_gene_name) %>%
+      dplyr::pull(external_gene_name)
+  
+    plot_out <- ggplot2::ggplot(
+          data = tmp,
+          mapping = aes(
+            x = sym,
+            y = id,
+            fill = bindInt
+          )
+        ) +
+      geom_tile(
+          height = 0.85,
+          width = 0.9,
+          colour = "black"
+        )  +
+      scale_y_discrete(
+          labels = y_labels
+        ) +
+      scale_fill_gradient2(
+          limits = base::c(rangE[1],rangE[2]),
+          low = "darkblue",
+          mid = "white",
+          high = "darkred"
+        ) +
+      theme_bw() +
+      theme(
+          axis.text.x = element_text(
+            angle = 90,
+            vjust = 0.5,
+            hjust = 1
+          ),
+          axis.text.y = element_text(
+            size = 4
+          ),
+          axis.title = element_blank(),
+          aspect.ratio = 8
+        )
+    
+    for(ext in base::c("pdf", "png")){
+        ggplot2::ggsave(
+          filename = base::paste0(
+              here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+              base::format(base::Sys.time(), "%Y%m%d"),
+              "_plotTF_heatmap",
+              "_FDR", FDR,
+              "_clus", clusChos,
+              "_algr", stringr::str_replace(algr, "-",""),
+              "_seed", seed,
+              "_kclus", i,
+              ".", ext
+            ),
+          plot = plot_out,
+          device = ext,
+          dpi = 300,
+          width = 4,
+          height = 6
+        )
+      }
+    
+    base::print(plot_out)
+  }
+```
+
+##<<necessary?_start>>
+
+## [2.11.] Save plot
+```{r}
+writer <- function(plot_out,i,FDR = 25L,seed = 0L){
+  for(ext in base::c("pdf", "png")){
+      ggsave(
+        filename = base::paste0(
+             here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+            base::format(base::Sys.time(), "%Y%m%d"),
+            "_heatmap",
+            "_plotTF",
+            "_FDR", FDR,
+            "_seed", seed,
+            "_kclus", i,
+            ".", ext
+          ),
+        plot = plot_out,
+        device = ext,
+        dpi = 300,
+        width = 4,
+        height = 6
+      )
+    }
+  }
+```
+
+## [2.14.] sigDE TF genes of TaDa cluster 5 and 6
+#### genes represent overlap of TaDa with scRNASeq
+#### see '[13.6.]' in '20190117_workflow_AH7&AG7combined.Rmd'
+```{r}
+genes_clus5 <- base::c(
+    "scro","E2f1","BEAF-32",
+    "run","opa","hng3",
+    "ham","fd102C","ey",
+    "Sp1"
+  )
+
+genes_clus6 <- base::c(
+    "HmgZ","emc","Optix",
+    "E2f1","tap","sd",
+    "D","wor","klu",
+    "SoxN","hbn","run",
+    "apt","opa","ph-p",
+    "ham","E(spl)m8-HLH","CrebA",
+    "slp2","ey","Sp1"
+  )
+```
+
+#### inserted 2020-03-09
+```{r}
+genes_clus5 <- base::c(
+    "scro","E2f1","BEAF-32",
+    "run", "Alh","opa",
+    "hng3","ham","fd102C",
+    "ey","Sp1"
+  )
+
+genes_clus6 <- base::c(
+    "HmgZ","emc","Optix",
+    "E2f1","tap","sd",
+    "D","wor","klu",
+    "SoxN","hbn","run",
+    "Alh", "apt","opa",
+    "ph-p", "ham","E(spl)m8-HLH",
+    "CrebA","slp2","ey",
+    "Sp1"
+  )
+```
+
+#### Evaluate
+```{r}
+plotTF %>%
+  dplyr::filter(
+      external_gene_name %in% genes_clus5 &
+      kclus == 5
+    ) %>% 
+  dplyr::filter(
+      base::is.na(external_gene_name)
+    )
+```
+
+#### genes_clus6
+```{r}
+clus_cur = 5
+
+tmp <- plotTF %>%
+  dplyr::filter(
+      external_gene_name %in% genes_clus5  &
+      kclus == clus_cur
+    ) %>%
+  dplyr::mutate(
+      external_gene_name = base::factor(
+        x = external_gene_name,
+        levels = genes_clus5, #genes_clus6,
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(external_gene_name,id)
+
+id_levels <- tmp %>%
+  dplyr::distinct(id, .keep_all = TRUE) %>%
+  dplyr::pull(id)
+
+tmp <- tmp %>%
+  dplyr::mutate(
+    id = base::factor(
+      x = id,
+      levels = base::rev(id_levels),
+      ordered = TRUE
+    )
+  )
+
+y_labels <- tmp %>%
+  dplyr::distinct(id, .keep_all = TRUE) %>%
+  dplyr::mutate(
+      id = base::factor(
+        x = id,
+        levels = id_levels,
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(id)
+
+plot_out <- ggplot2::ggplot(
+      data = tmp,
+      mapping = aes(
+        x = sym,
+        y = id,
+        fill = bindInt
+      )
+    ) +
+  geom_tile(
+      height = 0.85,
+      width = 0.9,
+      colour = "black"
+    )  +
+  scale_y_discrete(
+      breaks = y_labels$id,
+      labels = y_labels$external_gene_name
+    ) +
+  scale_fill_gradient2(
+      limits = base::c(rangE[1],rangE[2]),
+      low = "darkblue",
+      mid = "white",
+      high = "darkred"
+    ) +
+  theme_bw() +
+  theme(
+      axis.text.x = element_text(
+          angle = 90,
+          vjust = 0.5,
+          hjust = 1
+        ),
+      axis.text.y = element_text(
+          size = 8
+        ),
+      axis.title = element_blank(),
+      aspect.ratio = 5
+    )
+
+base::print(plot_out)
+```
+
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggsave(
+      filename = base::paste0(
+           here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_heatmap",
+          "_sigDEscRNAseq",
+          "_FDR", FDR,
+          "_seed", seed,
+          "_kclus", clus_cur,
+          ".", ext
+        ),
+      plot = plot_out,
+      device = ext,
+      dpi = 300,
+      width = 3,
+      height = 5
+    )
+  }
+```
+
+##<<necessary?_end>>
+
+##--------------------------##
+##----Print_entire_preTF----##
+##--------------------------##
+
+## [3.0.] Prepare data for writing
+```{r}
+vars <- base::c(
+    peakChr = "chr",
+    peakStart = "start",
+    peakEnd = "end"
+  )
+
+writeList <- preTF %>%
+  dplyr::rename(.,!!!vars) %>%
+  dplyr::mutate(
+    kclus = stringr::str_replace(
+        string = name,
+        pattern = '^(.*)_.*$',
+        replacement = '\\1'
+      ),
+    yInj = stringr::str_replace(
+        string = name,
+        pattern = '^.*_(.*)$',
+        replacement = '\\1'
+      )
+    ) %>%
+  dplyr::select(-name,-nd) %>%
+  dplyr::arrange(
+      kclus,peakChr,peakStart
+    ) %>%
+  dplyr::select(12,1:11,13)
+```
+
+## [3.1.] Write data out
+```{r}
+utils::write.table(
+    x = writeList,
+    file =  base::paste0(
+        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_postAnno",
+        "_preTF",
+        "_FDR", FDR,
+        "_clus", clusChos,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+

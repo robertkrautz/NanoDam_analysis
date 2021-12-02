@@ -1,0 +1,1152 @@
+---
+title: "20210827_workflow_correlations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [0.0.] Load necessary libraries
+```{r message=FALSE}
+base::library(tidyverse)
+base::library(magrittr)
+base::library(here)
+base::library(RColorBrewer)
+
+base::library(preprocessCore)
+base::library(foreach)
+base::library(doParallel)
+doParallel::registerDoParallel(
+    cores = 20
+  )
+```
+
+##<<necessary?_start>>
+
+## [0.1.] Save & load RData-image
+```{r}
+base::save.image(
+    file = base::paste0(
+        here::here("data/"),
+        "20210827_correlations.RData"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+base::load(
+  file = base::paste0(
+      here::here("data/"),
+      "20210827_correlations.RData"
+    )
+  )
+```
+
+##---------------------##
+##----Prerequisites----##
+##---------------------##
+
+## [0.2.] Load colour palette
+```{r}
+pal <- base::c(
+    "#3255A4", "#A4DBE8", "#8C8279",
+    "#EA7600", "#F6BE00", "#28B463",
+    "#AF7AC5", "#0E6655", "#0097A9",
+    "#E03C31", "#B5BD00", "#500778",
+    "#93272C", "#C6B0BC", "#8F993E",
+    "#17202A", "#FF6F00", "#555025"
+  )
+```
+
+## [0.3.] Define selected chromosomes
+```{r}
+selected_chr <- base::c("2L","2R","3L","3R","4","X","Y")
+```
+
+## [0.4.] Read in dm6.chrom.sizes file & subset
+#### see 'https://www.encodeproject.org/files/dm6.chrom.sizes/'
+#### chromosome names do not include 'chr'-prefixes in 'dm6.chrom.sizes.mod'
+```{r}
+metainfo <- readr::read_delim(
+      file = here::here("resources/dm6.chrom.sizes.mod"),
+      trim_ws = TRUE,
+      delim = "\t",
+      quote = "",
+      col_names = base::c('chr','length'),
+      col_types = "ci"
+    ) %>%
+  dplyr::filter(chr %in% selected_chr) %>%
+  dplyr::mutate(
+      starter = 0
+    ) %>% 
+  dplyr::arrange(chr)
+```
+
+## [0.5.] str_ignore() helper function
+```{r}
+str_ignore <- function(vec,pattern){
+  return(
+      vec[!stringr::str_detect(vec,pattern)]
+    )
+  }
+```
+
+##------------------##
+##----Read_files----##
+##------------------##
+
+## [1.0.] Identify filenames
+#### 8 files: "Cph_NanoDam_1.sort.bam.bin500.ext150.bgr", "Dam_TaDa_2.sort.bam.bin500.ext150.bgr" etc.
+```{r}
+dirs <- base::list.dirs(
+      path = here::here("data"),
+      full.names = TRUE,
+      recursive = FALSE
+    ) %>%
+  stringr::str_subset("raw")
+
+fns <- purrr::map(
+      .x = dirs,
+      .f = base::list.files,
+      full.names = TRUE 
+    ) %>%
+  base::unlist() %>% 
+  stringr::str_subset("bin500.ext150.bgr")
+  ##<<necessary?_start>> %>%
+  #.GlobalEnv$str_ignore("trimmed")
+  ##<<necessary?_end>>
+```
+
+## [1.1.] Read out info from filenames
+```{r}
+files <- tibble::tibble(
+      path = fns
+    ) %>%
+  dplyr::mutate(
+      file = base::basename(path),
+      expr = stringr::str_replace(
+          string = file,
+          pattern = "^(.*?)_.*",
+          replacement = "\\1"
+        ),
+      tec = stringr::str_replace(
+          string = file,
+          pattern = "^.*?_(.*?)_.*",
+          replacement = "\\1"
+        ),
+      repl = stringr::str_replace(
+          string = file,
+          pattern = "^.*?_.*?_(.*?)_.*",
+          replacement = "\\1"
+        ),
+      trim = stringr::str_detect(
+          string = file,
+          pattern = "trimmed"
+        ),
+      sample = stringr::str_replace(
+          string = file,
+          pattern = "^(.*?)\\..*",
+          replacement = "\\1"
+        ),
+    ) %>%
+  dplyr::select(
+      expr,tec,repl,
+      trim,sample,path
+    )
+```
+
+## [1.2.] Set orders & derive sample levels
+```{r}
+exprs <- base::c("dCTIP","Dam")
+tecs <- base::c("tada","nanodam")
+
+samples <- files %>%
+  dplyr::mutate(
+    expr = base::factor(
+        x = expr,
+        levels = exprs,
+        ordered = TRUE
+      ),
+    tec = base::factor(
+        x = tec,
+        levels = tecs,
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(
+      expr,tec,repl,trim
+    ) %>%
+  dplyr::pull(sample)
+```
+
+##-----------------##
+##----Functions----##
+##-----------------##
+
+## [2.0.] Function to subset combined_wide & correlate individual samples
+```{r}
+correlator <- function(col1, col2, df = combined_wide, method = "spearman"){
+  base::cat(base::as.character(col1),"vs.",base::as.character(col2),"\n")
+  return(
+    df %>%
+      dplyr::select(
+        1:3,
+        tidyselect::all_of(col1),
+        tidyselect::all_of(col2)
+        # dplyr::matches(
+        #     col1 %>%
+        #       base::unlist() %>%
+        #       base::unname() %>%
+        #       base::as.character()
+        #     ),
+        # dplyr::matches(
+        #     col2 %>%
+        #       base::unlist() %>%
+        #       base::unname() %>%
+        #       base::as.character()
+        #     )
+        ) %>%
+      purrr::when(
+        col1 == col2
+        ~ dplyr::rename(
+              .,
+              "sam_1" = !!base::names(.[4])
+            ) %>%
+          dplyr::filter(
+              !(sam_1 == 0)
+            ) %$%
+          stats::cor(
+              x = sam_1,
+              y = sam_1,
+              method = method
+            ),
+        ~ dplyr::rename(
+            .,
+            "sam_1" = !!base::names(.[4]),
+            "sam_2" = !!base::names(.[5])
+          ) %>% 
+        dplyr::filter(
+            !(sam_1 == 0 & sam_2 == 0)
+          ) %$%
+        stats::cor(
+            x = sam_1,
+            y = sam_2,
+            method = method
+          )
+        )
+    )
+  }
+```
+
+## [2.1.] Function to expand compressed bins into set of 500 bp-bins
+```{r}
+expander <- function(start, end, binSize=500){
+    base::ifelse(
+      end%%binSize==0,
+      start_coord <- base::seq(start,end-binSize,binSize),
+      start_coord <- base::seq(start,end,binSize)
+    )
+    base::ifelse(
+      end%%binSize==0,
+      end_coord <- base::seq(start+binSize,end,binSize),
+      end_coord <- base::c(base::seq(start+binSize,end,binSize),end)
+    )
+    return(
+      tibble::tibble(
+        start_coord,
+        end_coord
+      )
+    )
+  }
+```
+
+## [2.2.] Function to pad beginning of chromosome to starting position
+```{r}
+padder <- function(cur,end,binSize=500){
+    starter <- metainfo %>%
+      dplyr::filter(chr==cur) %>% 
+      dplyr::select(starter) %>% 
+      base::unlist() %>% 
+      base::unname()
+    
+    base::ifelse(
+        test = starter<end,
+        yes = start_coord <- base::c(0,base::seq(starter,end-binSize,binSize)),
+        no = start_coord <- base::c(0)
+      )
+    base::ifelse(
+        test = starter<end,
+        yes = end_coord <- base::c(starter,base::seq(starter+binSize,end,binSize)),
+        no = end_coord <- base::c(end)
+      )
+    if(end_coord[1] == 0){
+        end_coord <- end_coord[2:base::length(end_coord)]
+        start_coord <- start_coord[2:base::length(start_coord)]
+      }
+    return(
+      tibble::tibble(
+        start_coord,
+        end_coord
+      )
+    )
+  }
+```
+
+## [2.3.] Function to transform data into all 500 bp bins
+```{r}
+arithmetrics <- function(infile, selected_chr){
+    
+    skeleton <- infile %>%
+      dplyr::filter(chr %in% selected_chr) %>% 
+      dplyr::filter(!(end-start>500))
+    
+    replace <- infile %>%
+      dplyr::filter(chr %in% selected_chr) %>% 
+      dplyr::filter(end-start>500 & start!=0) %>% 
+      dplyr::mutate(
+          expansion = purrr::pmap(
+            .l = base::list(
+                  start,end
+                ),
+            .f = .GlobalEnv$expander
+          )
+        ) %>%
+      tidyr::unnest(
+          cols = "expansion"
+        ) %>%
+      dplyr::select(
+          chr,
+          start_coord,
+          end_coord,
+          score
+        ) %>%
+      dplyr::rename(
+          .,
+          start = start_coord,
+          end = end_coord
+        )
+    
+    beginning. <- infile %>%
+      dplyr::filter(chr %in% selected_chr) %>% 
+      dplyr::filter(start==0L)
+    
+    if(base::nrow(beginning.)==0){
+        beginning <- tibble::tibble(
+            chr = character(),
+            start = numeric(),
+            end = numeric(),
+            score = double()
+          )
+      } else {
+        beginning <- beginning. %>%
+          dplyr::mutate(
+              padding = purrr::pmap(
+                .l = base::list(
+                    chr,end
+                  ),
+                .f = .GlobalEnv$padder
+              )
+            ) %>%
+          tidyr::unnest(
+              cols = "padding"
+            ) %>% 
+          dplyr::select(
+              chr,
+              start_coord,
+              end_coord,
+              score
+            ) %>%
+          dplyr::rename(
+              .,
+              start = start_coord,
+              end = end_coord
+            )
+      }
+    
+    combined <- dplyr::bind_rows(skeleton,replace,beginning) %>%
+      dplyr::distinct(chr,start,end,score) %>% 
+      dplyr::arrange(chr,start,end)
+    
+    return(combined)
+  }
+```
+
+## [2.4.] Run arithmetics() for individual file & evaluate
+```{r}
+infile <- readr::read_delim(
+    file = fns[1],
+    delim = "\t",
+    quote = "",
+    col_names = base::c('chr','start','end','score'),
+    col_types = "ciin"
+  )
+outfile <- .GlobalEnv$arithmetrics(infile, selected_chr)
+
+outfile %>%
+  dplyr::group_by(chr) %>%
+  dplyr::filter(dplyr::row_number() %in% base::c(1,dplyr::n()))
+```
+
+##-----------------##
+##----Read_data----##
+##-----------------##
+
+##<<necessary?_start>>
+
+## [3.0.] Read in datasets across all samples & perform arithmetics()
+#### __Deprecated__ due to long runtime
+```{r eval=FALSE}
+arits <- files %>%
+    dplyr::mutate(
+      data = purrr::map(
+          .x = path,
+          .f = readr::read_delim,
+          delim = "\t",
+          skip = 0,
+          col_names = base::c("chr","start","end","score"),
+          col_types = readr::cols(
+            .default = readr::col_integer(),
+            chr = readr::col_character()
+          )
+        ),
+      arit = purrr::map(
+          .x = data,
+          .f = .GlobalEnv$arithmetrics,
+          selected_chr = selected_chr
+        )
+    ) %>%
+  dplyr::select(-path) %>%
+  tidyr::unnest(cols = data)
+```
+
+##<<necessary?_end>>
+
+## [3.0.] Read in datasets all samples separately
+#### Evaluate with 'dplyr::mutate(data,rws = purrr::map_int(data,nrow))'
+```{r}
+data <- files %>%
+  dplyr::mutate(
+    data = purrr::map(
+        .x = path,
+        .f = readr::read_delim,
+        delim = "\t",
+        skip = 0,
+        col_names = base::c("chr","start","end","score"),
+        col_types = readr::cols(
+          .default = readr::col_integer(),
+          chr = readr::col_character()
+        )
+      )
+    ) %>%
+  dplyr::select(-path)
+```
+
+## [3.1.] Apply .GlobalEnv$arithmetics() in a parallel manner
+#### Alternative: preArit <- dplyr::pull(cur,data) %>% .[[1]]
+#### Evaluate: 'arits_parallel %>% dplyr::group_by(sample) %>% dplyr::summarise(n = dplyr::n())'
+#### arits_parallel: 2200792 rows (= 8*275099)
+```{r}
+arits_parallel <- foreach::foreach(i=1:base::nrow(data)) %dopar% {
+    
+      cur <- dplyr::filter(data, dplyr::row_number() == i)
+      preArit <- dplyr::pull(cur,data) %>%
+        plyr::ldply(.,function(x){x})
+      postArit <- .GlobalEnv$arithmetrics(
+          infile = preArit,
+          selected_chr = selected_chr
+        )
+      return(
+        dplyr::mutate(cur, arit = base::list(postArit))
+      )
+    } %>%
+  dplyr::bind_rows() %>%
+  dplyr::select(-data) %>%
+  tidyr::unnest(cols = arit)
+```
+
+## [3.2.] Quantile normalize all samples
+#### arits_wide & arits_qn: 275099 rows
+```{r}
+arits_wide <- arits_parallel %>%
+  dplyr::select(sample:score) %>% 
+  tidyr::pivot_wider(
+      names_from = "sample",
+      values_from = "score"
+    )
+  
+dims <- base::dim(arits_wide)
+arits_qn__ <- arits_wide %>%
+  dplyr::select(4:dims[[2]]) %>%
+  #dplyr::top_n(100) %>% 
+  base::as.matrix() %>%
+  preprocessCore::normalize.quantiles()
+
+arits_qn_ <- tibble::as_tibble(
+    x = arits_qn__,
+    .name_repair = "unique"
+  )
+base::colnames(arits_qn_) <- arits_wide %>%
+  dplyr::select(4:dims[[2]]) %>%
+  base::colnames()
+
+arits_qn <- dplyr::bind_cols(
+    x = dplyr::select(arits_wide,chr:end),
+    y = arits_qn_
+  )
+```
+
+## [3.3.] Evaluate quantile normalization
+```{r}
+arits_parallel %>%
+  dplyr::group_by(sample) %>% 
+  dplyr::summarise(sum = base::sum(score))
+
+arits_qn %>%
+  tidyr::pivot_longer(
+      cols = tidyselect::contains("_"),
+      names_to = "sample",
+      values_to = "score_qn"
+    ) %>% 
+  dplyr::group_by(sample) %>% 
+  dplyr::summarise(sum = base::sum(score_qn))
+```
+
+## [3.4.] Prepare scatter data
+#### 17.606.336 rows (=(8*8)*275099 rows)
+```{r}
+samples <- base::colnames(arits_qn_)
+
+arits_cmb <- base::expand.grid(samples, samples) %>%
+  tibble::as_tibble() %>% 
+  dplyr::rename(
+      sam_1 = "Var1",
+      sam_2 = "Var2"
+    ) %>%
+  dplyr::mutate(
+    data = purrr::pmap(
+      .l = base::list(
+          sam_1, sam_2
+        ),
+      .f = function(x,y){
+        return(
+          arits_qn_ %>%
+            dplyr::select(
+                data_1 = tidyselect::all_of(x),
+                data_2 = tidyselect::all_of(y)
+              )
+          )
+        }
+      )
+    ) %>%
+  tidyr::unnest(data)
+```
+
+```{r}
+arits_cmb_sub <- arits_cmb %>%
+  dplyr::group_by(sam_1,sam_2) %>%
+  dplyr::slice_sample(n = 500)
+```
+
+## [3.5.] Plot scatterplot matrix
+```{r}
+plot_corrs <- ggplot2::ggplot(
+      data = arits_cmb,
+      aes_string(x = "data_1", y = "data_2")
+    ) + 
+  ggrastr::geom_point_rast(
+      na.rm = TRUE,
+      alpha = 0.3,
+      size = 0.1
+    ) +
+  # geom_smooth(
+  #     method = 'lm',
+  #     formula= y ~ x
+  #   ) +
+  stat_summary(
+      fun.data = mean_cl_normal
+    ) + 
+  facet_grid(
+      sam_1 ~ sam_2,
+      scales = "free"
+    ) +
+  theme_bw() +
+  theme(
+      aspect.ratio = 1,
+      panel.spacing = grid::unit(0.1,"line"),
+      axis.title = element_blank(),
+      axis.text.x = element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      )
+    )
+base::print(plot_corrs)
+```
+
+## [3.6.] Save contingency table
+#### previous: "20210203_correlation_Notch", "_trimSortBin500Ext150Trim",
+```{r}
+for(ext in c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20210907_correlations/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_scattermatrix",
+          "_genomewide",
+          "_NanoDamVsTaDa",
+          "_quantNorm",
+          "_woTrim",
+          ".", ext
+        ),
+      plot = plot_corrs,
+      device = ext,
+      dpi = 300,
+      width = 14,
+      height = 14
+    )
+  }
+```
+
+##----------------------##
+##----Fingerprinting----##
+##----------------------##
+
+## [4.0.] Helper function to calculate numbers for Fingerprint plot
+#### code chunk added 20211116
+```{r}
+fingerPrep <- function(df, sample){
+    cumSum <- df %>%
+      dplyr::select(tidyselect::all_of(sample)) %>%
+      dplyr::rename("col" = !!names(.[1])) %>% 
+      dplyr::arrange(col) %>%
+      dplyr::mutate(
+          csum = base::cumsum(col)
+        )
+    
+    totalReads <- cumSum %>%
+      dplyr::filter(dplyr::row_number() == dplyr::n()) %>%
+      dplyr::select(csum) %>%
+      base::unlist() %>% 
+      base::unname() %>%
+      base::as.integer()
+    
+    totalLength <- cumSum %>%
+      base::nrow() %>%
+      base::as.integer()
+    
+    cumPrep <- cumSum %>%
+      dplyr::mutate(
+          sam = sample,
+          col_rel = csum / totalReads,
+          nrow_rel = dplyr::row_number() / totalLength
+        ) %>%
+      dplyr::select(3:5)
+    
+    return(cumPrep)
+  }
+base::remove(sample,df)
+```
+
+## [4.1.] Apply fingerPrep() on all samples
+#### Note: see 'test <- .GlobalEnv$fingerPrep(sample = samples[1])'
+```{r}
+fingerAll <- foreach(i=1:length(samples)) %dopar% .GlobalEnv$fingerPrep(
+    df = arits_wide,
+    sample = samples[i]
+  )
+
+fingerAll_long <- dplyr::bind_rows(fingerAll)
+```
+
+## [4.2.] Plot fingerprint plots
+#### evaluate with 'dplyr::distinct(fingerAll_long,sam)'
+```{r}
+col_2 <- base::c(
+    base::rep("red",2),
+    base::rep("#3CB85D",2),
+    base::rep("darkred",2),
+    base::rep("darkgreen",2)
+  )
+
+ggplot2::ggplot(
+      data = fingerAll_long,
+      mapping  = aes(
+        x = nrow_rel,
+        y = col_rel,
+        color = sam
+      )
+    ) +
+  geom_abline(
+      slope = 1,
+      linetype = "dashed"
+    ) +
+  scale_color_manual(
+      limits = samples,
+      breaks = samples,
+      values = col_2
+    ) +
+  geom_line() +
+  theme_bw() +
+  theme(
+      aspect.ratio = 1,
+      legend.position = base::c(0.05,0.95),
+      legend.justification = base::c(0,1),
+      legend.title = element_blank(),
+      legend.background = element_rect(
+        fill =  "grey85"
+      )
+    )
+```
+
+## [4.3.] Save fingerprint plot
+```{r}
+for(ext in c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20210907_correlations/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_fingerprintPlot",
+          "_genomewide",
+          "_NanoDamVsTaDa",
+          "_woTrim",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 5,
+      height = 5
+    )
+  }
+```
+
+##-------------------##
+##----Correlation----##
+##-------------------##
+
+## [5.0.] Build list with all variations of the compared samples
+#### Note: 'Variations' are to be understood in terms of combinatorics
+#### Note: To fill the confidence matrix with all 16x16 (=256) options (i.e., incl trim samples), 'repetitions' are allowed
+#### Note: "combin <- combn(samples, 2) %>% t"
+```{r}
+combin <- base::expand.grid(samples, samples) %>%
+  tibble::as_tibble() %>% 
+  dplyr::rename(
+      sam_1 = "Var1",
+      sam_2 = "Var2"
+    )
+```
+
+## [5.1.] Run correlator() on all variations with repetition
+```{r}
+all_corr_pcc <- combin %>%
+  dplyr::mutate(
+    coeff = purrr::pmap_dbl(
+      .l = base::list(
+          base::as.character(sam_1),
+          base::as.character(sam_2)
+        ),
+      .f = correlator,
+      df = arits_qn,
+      method = "pearson"
+    ),
+    Rsquare = coeff^2
+  )
+
+all_corr_pcc_plot <- all_corr_pcc %>%
+  dplyr::mutate(
+    sam_1 = base::factor(
+        x = sam_1,
+        levels = samples,
+        ordered = TRUE
+      ),
+    sam_2 = base::factor(
+        x = sam_2,
+        levels = samples,
+        ordered = TRUE
+      )
+  ) %>%
+  dplyr::arrange(sam_1,sam_2)
+```
+
+##<<necessary?_start>>
+
+#### sam_1 = col1 = "Dam_nanodam_S3_R1_001_trimmed", sam_2 = col2 = "dCTIP_tada_S7_R1_001"
+```{r}
+all_corr_pcc %>% 
+  dplyr::filter(
+      (
+        sam_1 == "Dam_nanodam_S3_R1_001_trimmed" &
+        sam_2 == "dCTIP_tada_S7_R1_001"
+      ) |
+      (
+        sam_1 == "dCTIP_tada_S7_R1_001" &
+        sam_2 == "Dam_nanodam_S3_R1_001_trimmed"
+      )
+    )
+```
+
+##<<necessary?_end>>
+
+## [5.2.] Plot all correlations in contingency table
+```{r}
+cols <- grDevices::colorRampPalette(
+    base::rev(RColorBrewer::brewer.pal(11,"RdBu"))
+  )(100)
+
+corr_plot <- ggplot2::ggplot(
+    data = all_corr_pcc_plot,
+    mapping = aes(
+        x = sam_1,
+        y = sam_2,
+        fill = coeff
+      )
+    ) +
+  geom_tile(
+      stat = "identity",
+      width = 0.9,
+      height = 0.9
+    ) +
+  geom_text(
+    mapping = aes(
+        label = base::round(coeff,2),
+        color = base::ifelse(coeff>0.8,"on","off")
+      ),
+      size = 3
+    ) +
+  scale_fill_gradientn(
+      colors = .GlobalEnv$cols,
+      limits = base::c(0L,1L)
+    ) +
+  scale_color_manual(
+      values = base::c(on="white",off="black")
+    ) +
+  theme(
+      axis.text.x = element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5,
+        size = 8
+      ),
+      axis.text.y = element_text(
+        size = 8
+      ),
+      aspect.ratio = 1,
+      axis.title = element_blank()
+    ) +
+  # scale_fill_gradient(
+  #   low = "white",
+  #   #mid = "white",
+  #   high = "darkred"
+  #   # ,
+  #   # midpoint = 0.5
+  # ) +
+  guides(
+      fill = guide_colorbar(
+        label.position = "right",
+        title = NULL,
+        title.position = "left",
+        title.theme = element_text(
+          angle = 90,
+          hjust = 0.5
+        ),
+        ticks=T,
+        nbin=100,
+        barheight=5,
+        label=T,
+        barwidth=0.5
+      ),
+      color = "none"
+    )
+base::print(corr_plot)
+```
+
+## [4.3.] Save contingency table
+##<<necessary?_start>>
+#### previous: "20210203_correlation_Notch", "_trimSortBin500Ext150Trim",
+##<<necessary?_end>>
+```{r}
+for(ext in c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20210907_correlations/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_correlation",
+          "_genomewide",
+          "_NanoDamVsTaDa",
+          "_pearson",
+          "_quantNorm",
+          "_woTrim",
+          ".", ext
+        ),
+      plot = corr_plot,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 6
+    )
+  }
+```
+
+##----------------------##
+##----Bedgraph_based----##
+##----------------------##
+
+## [5.0.] Identify bedgraph files
+#### 8 files: "Cph_NanoDam_1_vs_Dam_NanoDam_1.bgr"; "Cph_TaDa_1_vs_Dam_TaDa_1.bgr" etc.
+```{r}
+dirs_bgrs <- base::list.dirs(
+      path = here::here("data"),
+      full.names = TRUE,
+      recursive = TRUE
+    ) %>%
+  stringr::str_subset("_tracks") %>%
+  .GlobalEnv$str_ignore("DamOnly") %>%
+  .GlobalEnv$str_ignore("_DamVsDam")
+
+fns_ <- purrr::map(
+      .x = dirs_bgrs,
+      .f = base::list.files,
+      full.names = TRUE
+    ) %>%
+  base::unlist() %>% 
+  stringr::str_subset("gatc.bedgraph$")
+  #stringr::str_subset("bedgraph.quant.norm.bedgraph")
+```
+
+####  add controls manually
+#### 2 files: "Dam_TaDa_2_vs_Dam_TaDa_1.bgr", "Dam_TaDa_2_vs_Dam_TaDa_1.bgr"
+```{r}
+ctrl_nano <- base::paste0(
+    here::here("data/"),
+    "20211117_cph_nanodam_DamVsDam/cph_nanodam_DamVsDam_tracks/",
+    "Exp_nanodam_S3-vs-Dam_nanodam_ctrl_S10.gatc.bedgraph"
+  )
+ctrl_tada <- base::paste0(
+    here::here("data/"),
+    "20211117_cph_tada_DamVsDam/cph_tada_DamVsDam_tracks/",
+    "Exp_tada_S9-vs-Dam_tada_ctrl_S8.gatc.bedgraph"
+  )
+fns <- base::c(fns_,ctrl_nano,ctrl_tada)
+```
+
+## [5.1.] Read out info from filenames
+```{r}
+files <- tibble::tibble(
+      path = fns
+    ) %>%
+  dplyr::mutate(
+    file = base::basename(path),
+    sample = stringr::str_replace(
+        string = file,
+        pattern = "^(.*?)\\.gatc.*",
+        replacement = "\\1"
+      )
+    ) %>%
+  dplyr::select(
+      sample,file,path
+    )
+```
+
+## [5.2.] Read in datasets all samples separately
+#### Evaluate with 'dplyr::mutate(data,rws = purrr::map_int(data,nrow))'
+```{r}
+data <- files %>%
+    dplyr::mutate(
+      datasets = purrr::map(
+          .x = path,
+          .f = readr::read_delim,
+          delim = "\t",
+          skip = 1,
+          col_names = base::c("chr","start","end","score"),
+          col_types = readr::cols(
+            .default = readr::col_integer(),
+            score = readr::col_double(),
+            chr = readr::col_character()
+          )
+        )
+    ) %>%
+  dplyr::select(sample,datasets)
+
+data %>%
+  dplyr::mutate(
+    rws = purrr::map_int(
+      .x = datasets,
+      .f = base::nrow
+    )
+  )
+
+data_wide <- data %>%
+  tidyr::unnest(datasets) %>%
+  tidyr::pivot_wider(
+      names_from = "sample",
+      values_from = "score"
+    )
+```
+
+## [5.3.] Quantile normalize all samples
+```{r}
+dims <- base::dim(data_wide)
+data_qn__ <- data_wide %>%
+  dplyr::select(4:dims[[2]]) %>%
+  base::as.matrix() %>%
+  preprocessCore::normalize.quantiles()
+
+data_qn_ <- tibble::as_tibble(
+    x = data_qn__,
+    .names_repair = "unique"
+  )
+base::colnames(data_qn_) <- data_wide %>%
+  dplyr::select(4:dims[[2]]) %>%
+  base::colnames()
+
+data_qn <- dplyr::bind_cols(
+    x = dplyr::select(data_wide,chr:end),
+    y = data_qn_
+  )
+```
+
+## [6.0.] Build list with all variations of the compared samples
+#### Note: 'Variations' are to be understood in terms of combinatorics
+#### Note: To fill the confidence matrix with all 16x16 (=256) options, 'repetitions' are allowed
+#### Note: "combin <- combn(samples, 2) %>% t"
+```{r}
+combin <- base::expand.grid(files$sample, files$sample) %>%
+  tibble::as_tibble() %>% 
+  dplyr::rename(
+      sam_1 = "Var1",
+      sam_2 = "Var2"
+    )
+```
+
+## [6.1.] Run correlator() on all variations with repetition
+```{r}
+all_corr_pcc <- combin %>%
+  dplyr::mutate(
+    coeff = purrr::pmap_dbl(
+      .l = base::list(
+          base::as.character(sam_1),
+          base::as.character(sam_2)
+        ),
+      .f = correlator,
+      df = data_qn,
+      method = "pearson"
+    ),
+    Rsquare = coeff^2
+  )
+
+all_corr_pcc_plot <- all_corr_pcc %>%
+  dplyr::mutate(
+    sam_1 = base::factor(
+        x = sam_1,
+        levels = files$sample,
+        ordered = TRUE
+      ),
+    sam_2 = base::factor(
+        x = sam_2,
+        levels = files$sample,
+        ordered = TRUE
+      )
+  ) %>%
+  dplyr::arrange(sam_1,sam_2)
+```
+
+## [6.2.] Plot all correlations in contingency table
+```{r}
+cols <- grDevices::colorRampPalette(
+    base::rev(RColorBrewer::brewer.pal(11,"RdBu"))
+  )(100)
+
+corr_plot <- ggplot2::ggplot(
+    data = all_corr_pcc_plot,
+    mapping = aes(
+        x = sam_1,
+        y = sam_2,
+        fill = coeff
+      )
+    ) +
+  geom_tile(
+      stat = "identity",
+      width = 0.9,
+      height = 0.9
+    ) +
+  geom_text(
+    mapping = aes(
+        label = base::round(coeff,2),
+        color = base::ifelse(coeff>0.8,"on","off")
+      ),
+      size = 3
+    ) +
+  scale_fill_gradientn(
+      colors = .GlobalEnv$cols,
+      limits = base::c(0L,1L)
+    ) +
+  scale_color_manual(
+      values = base::c(on="white",off="black")
+    ) +
+  theme(
+      axis.text.x = element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5,
+        size = 8
+      ),
+      axis.text.y = element_text(
+        size = 8
+      ),
+      aspect.ratio = 1,
+      axis.title = element_blank()
+    ) +
+  # scale_fill_gradient(
+  #   low = "white",
+  #   #mid = "white",
+  #   high = "darkred"
+  #   # ,
+  #   # midpoint = 0.5
+  # ) +
+  guides(
+      fill = guide_colorbar(
+        label.position = "right",
+        title = NULL,
+        title.position = "left",
+        title.theme = element_text(
+          angle = 90,
+          hjust = 0.5
+        ),
+        ticks=T,
+        nbin=100,
+        barheight=5,
+        label=T,
+        barwidth=0.5
+      ),
+      color = "none"
+    )
+base::print(corr_plot)
+```
+
+## [6.3.] Save contingency table
+```{r}
+for(ext in c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20210907_correlations/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_correlation",
+          "_GATCbedgraph",
+          "_NanoDamVsTaDa",
+          "_pearson",
+          "_quantNorm",
+          "_gatcBgrDerived",
+          "_InclNanoDamTaDaCtrls",
+          ".", ext
+        ),
+      plot = corr_plot,
+      device = ext,
+      dpi = 300,
+      width = 8,
+      height = 8
+    )
+  }
+```

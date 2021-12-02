@@ -1,0 +1,3603 @@
+---
+title: "20190424_workflow_clustering"
+author: "R_Krautz"
+date: "05/12/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [-1.0.] Install necessary packages
+```{r}
+utils::install.packages("adegenet")
+BiocManager::install("BSgenome.Dmelanogaster.UCSC.dm6")
+devtools::install_github('VPetukhov/ggrastr')
+```
+
+## [0.0.] Load necessary libraries
+```{r message=FALSE}
+base::library(tidyverse)
+base::library(magrittr)
+base::library(ggrastr)
+base::library(here)
+base::library(bedr)
+
+base::library(rtracklayer)
+base::library(IRanges)
+base::library(UpSetR)
+base::library(cluster)
+base::library(mclust)
+base::library(factoextra)
+
+base::library(BSgenome)
+base::library(BSgenome.Dmelanogaster.UCSC.dm6)
+
+base::library(doParallel)
+base::library(foreach)
+doParallel::registerDoParallel(cores = 40)
+
+##<<necessary?_start>>
+#base::library(adegenet)
+#base::library(Rtsne)
+##<<necessary?_end>>
+```
+
+## [0.1.] Save & load image
+```{r}
+base::save.image(
+   file = base::paste0(
+        here::here("data/20181205_NanoDam_DichaeteOgre_GrhEyD_peaks/"),
+        "20211126_rerun.RData"
+      ),
+   compress = TRUE
+  )
+```
+
+```{r}
+base::load(
+   file = base::paste0(
+      here::here("data/20181205_NanoDam_DichaeteOgre_GrhEyD_peaks/"),
+      "20211126_rerun.RData"
+    )
+  )
+```
+
+##---------------------##
+##----Prerequisites----##
+##---------------------##
+
+## [0.1.] All prerequisites
+```{r}
+FDRs <- base::c(
+    2000L, 1900L, 1800L, 1700L, 1600L, 1500L, 1400L, 1300L,
+    1200L, 1100L, 1000L, 900L, 800L, 700L, 600L, 500L,  
+    475L, 450L, 425L, 400L, 375L, 350L, 325L, 300L,
+    275L, 250L, 225L, 200L, 175L, 150L, 125L, 100L,
+    75L, 50L, 25L, 10L, 5L, 3L, 2L, 1L, 0L
+  )
+sel_chrom <- base::c(
+    "2L", "2R", "3L",
+    "3R", "4","MT",
+    "X", "Y"
+  )
+
+cols3 <- base::c(
+    "#ED4938","#ADC607","#F4C10D",
+    "#333136", "#687BC0","#E76F99",
+    "#ED9038", "#2AB348", "#106881",
+    "#4113CB"
+  )
+```
+
+## [0.2.] Experimental groups
+```{r}
+groups <- tibble::tibble(
+  profile = base::c(
+      "DichaeteGal4_DichaeteGFP",
+      "DichaeteGal4_GrainyheadGFP",
+      "DichaeteGal4_EyelessGFP",
+      "OgreGal4_DichaeteGFP",
+      "OgreGal4_EyelessGFP"
+    )
+  )
+```
+
+##------------------------------##
+##----Components_of_workflow----##
+##------------------------------##
+
+## [1.0.] filer() function to identify files of interest
+```{r}
+filer <- function(fdr, dir = folder){
+  return(
+    base::list.files(
+        path = dir,
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('reproPeak') %>%
+    stringr::str_subset(
+     base::paste0('._',fdr,'\\..*')
+    )
+  )
+}
+```
+
+## [1.1.] reader() function
+```{r}
+reader <- function(filename, fdr = 25L, chroms = sel_chrom){
+  return(
+    readr::read_delim(
+        file = filename,
+        delim = "\t",
+        quote = "",
+        col_names = base::c(
+            "chr","start","end","sign"
+          ),
+        col_types = "ciic"
+      ) %>%
+    dplyr::mutate(
+      chr = base::factor(
+          x = chr,
+          levels = chroms,
+          ordered = TRUE
+        ),
+      sign = stringr::str_replace(
+          string  = sign,
+          pattern = base::paste0('(.*)_',fdr,'\\.repro.*$'),
+          replacement = '\\1'
+        )
+      )
+    )
+  }
+```
+
+## [1.2.] merger() function to reduce peaks bedr-dependent
+```{r}
+merger <- function(df, chosenEngine="bedtools"){
+  
+  out <- tryCatch(
+      {
+        if(!bedr::check.binary(chosenEngine)){
+          stop(
+           base::paste0(
+              "Chosen engine:\t",chosenEngine,"\tnot available.\n"
+             )
+          )
+        }else{
+          
+          is.df.valid <- df %>%
+            base::as.data.frame() %>%
+            bedr::is.valid.region(
+                check.chr = FALSE
+              )
+          
+          dfVal <- df %>%
+            dplyr::filter(
+                dplyr::row_number() == base::which(is.df.valid)
+              ) %>% 
+            base::as.data.frame()
+          
+          dfSort <- bedr::bedr(
+              engine = chosenEngine,
+              input = base::list(i=dfVal),
+              method = "sort",
+              params = "",
+              check.chr = FALSE,
+              check.valid = TRUE,
+              check.sort = FALSE
+            )
+          
+          dfMerg <- bedr::bedr(
+              engine = chosenEngine,
+              input = base::list(i=dfSort),
+              method = "merge",
+              params = "-c 4 -o distinct",
+              check.chr = FALSE,
+              check.valid = TRUE,
+              check.sort = TRUE,
+              check.merge = FALSE
+            )
+          
+          dfMerg %>%
+            tibble::as_tibble() %>%
+            dplyr::arrange(chr, start)
+          
+        }
+    },
+    error = function(cond){
+        base::message(cond)
+        return(NA)
+      },
+    warning = function(cond){
+        base::message(cond)
+        return(NA)
+      }
+    )
+  return(out)  
+  }
+```
+
+## [1.3.] cluster() function for cluster assignment
+```{r}
+cluster <- function(df, groups=groups){
+
+  lookup <- df %>%
+    dplyr::distinct(sign) %>%
+    dplyr::mutate(
+        clus = dplyr::row_number()
+      )
+  
+  return(
+    df %>%
+      dplyr::mutate(
+        peak = stringr::str_split(
+            sign,
+            pattern = ","
+          ),
+        clus = purrr::map_int(
+          .x = sign,
+          .f = function(x){
+            return(
+              lookup %>%
+                dplyr::filter(
+                    sign == x 
+                  ) %>%
+                dplyr::select(clus) %>%
+                base::unlist() %>%
+                base::unname()
+              )
+            }
+          ),
+        coord = purrr::pmap_chr(
+            .l = base::list(
+                chr,start,end
+              ),
+            .f = stringr::str_c,
+            sep = "_"
+          ),
+        data = purrr::map(
+          .x = peak,
+          .f = function(x){
+            return(
+              groups %>%
+                dplyr::mutate(
+                  present = dplyr::case_when(
+                      profile %in% base::as.character(x) ~ 1L,
+                      TRUE ~ 0L
+                    )
+                  )
+              )
+            }
+          )
+        ) %>%
+      tidyr::unnest(cols = "data") %>%
+      dplyr::arrange(clus,chr,start)
+    )
+  }
+```
+
+##----------------##
+##----Analysis----##
+##----------------##
+
+## [2.0.] Read in & aggregate
+```{r}
+FDR = 25L
+
+files <- .GlobalEnv$filer(
+      fdr= FDR,
+      dir = here::here("data/20181205_NanoDam_DichaeteOgre_GrhEyD_peaks")
+    ) %>%
+  stringr::str_subset('DichaeteGal4_')
+
+preMerge <- purrr::map_dfr(
+      .x = files,
+      .f = .GlobalEnv$reader,
+      fdr = FDR
+    ) %>%
+  dplyr::arrange(chr, start) %>% 
+  dplyr::mutate(
+      chr = base::as.character(chr)
+    )
+```
+
+## [2.1.] Evaluate read datasets
+```{r}
+preMerge %>%
+  dplyr::group_by(sign,chr) %>%
+  dplyr::summarise(amount = dplyr::n())
+```
+
+## [2.2.] Apply merger() & cluster()
+```{r}
+groups_ <- groups %>%
+  dplyr::filter(
+      stringr::str_detect(profile,"^Dichaete")
+    )
+
+postMerge <- .GlobalEnv$merger(df = preMerge)
+postClus <- .GlobalEnv$cluster(
+    df = postMerge,
+    groups = groups_
+  )
+```
+
+## [3.0.] Data preparation for heatmap visualization
+```{r}
+lev <- postClus %>%
+  dplyr::distinct(coord) %>%
+  dplyr::pull(coord)
+
+subset <- postClus %>%
+   dplyr::arrange(clus,chr,start) %>%
+    dplyr::mutate(
+      coord = base::factor(
+        x = coord,
+        levels = lev,
+        ordered = TRUE
+      )
+    )
+```
+
+## [3.1.] Data visualization via heatmaps
+```{r}
+plot <- ggplot2::ggplot(
+      data = subset,
+      mapping = aes(
+        x = profile,
+        y = coord,
+        fill = present
+      )
+    ) +
+  ggrastr::geom_tile_rast() +
+  scale_fill_gradient2(
+      low = "white",
+      high = "darkred"
+    ) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(
+        angle = 90,
+        vjust = 0.5,
+        hjust = 1,
+        size = 12
+      ),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "none",
+    aspect.ratio = 3,
+    panel.border = element_rect(
+        color = "black",
+        fill=NA,
+        size=1
+      )
+    )
+
+base::print(plot)
+```
+
+## [3.2.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_heatmap_binaryPeakAppearance_FDR", FDR,
+          "_DichOgre",
+          ".", ext
+        ),
+      plot = plot,
+      device = ext,
+      dpi = 300,
+      width = 3,
+      height = 8
+    )
+  }
+```
+
+## [3.3.] Data preparation for UpSetR plot
+```{r}
+upSubset <- postClus %>%
+  dplyr::select(coord,profile,present) %>%
+  tidyr::spread(
+      key = "profile",
+      value = "present"
+    ) %>%
+  base::as.data.frame()
+```
+
+## [3.4.] UpSetR plot visualization
+```{r}
+UpSetR::upset(
+    data = upSubset,
+    sets = dplyr::pull(groups_,profile),
+    nintersects = NA,
+    sets.bar.color = "darkred",
+    order.by = "freq",
+    empty.intersections = "on",
+    keep.order = TRUE,
+    show_numbers
+  )
+```
+
+## [3.5.] Save plot
+```{r}
+outfile <- base::paste0(
+    here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+    base::format(base::Sys.time(), "%Y%m%d"),
+    "_UpSetR_binaryPeakAppearance_FDR", FDR,
+    "_DicOgre.pdf"
+  )
+
+grDevices::pdf(
+  outfile,
+  width = 10,
+  height = 5,
+  onefile = FALSE
+  )
+base::print(
+  UpSetR::upset(
+      data = upSubset,
+      sets = dplyr::pull(groups_,profile),
+      nintersects = NA,
+      sets.bar.color = "darkred",
+      order.by = "freq",
+      empty.intersections = "on",
+      keep.order = TRUE,
+      show.numbers = FALSE
+    )
+  )
+grDevices::dev.off()
+```
+
+##----------------------##
+##-----DamID_scores-----##
+##----------------------##
+
+## [4.0.] Function to read in all *.quant.norm.bedgraph files
+```{r}
+reader <- function(fn, chroms = sel_chrom, regex='^.*/(.*?)\\.gatc.*$'){
+    
+    sample <- stringr::str_replace(fn, regex, '\\1')
+    
+    file <- readr::read_delim(
+          file = fn,
+          delim = '\t',
+          col_types = "ciin",
+          col_names = base::c(
+              'chr','start','end','score'
+            )
+        )  %>%
+      dplyr::filter(chr %in% chroms) %>%
+      dplyr::mutate(
+          chr = stringr::str_replace(chr, "^chr", ""),
+          name = sample
+        )
+    return(file)
+  }
+```
+
+## [4.1.] Aggregate function
+#### additional summary function 'sumabs = base::sum(int_score)'
+```{r}
+aggregator <- function(chr,start,end,agg,...){
+  return(
+    agg %>%
+      dplyr::rename(.,x=chr,y=start,z=end) %>% 
+      dplyr::filter(x==chr) %>%
+      dplyr::filter(!(z<=start | y>=end)) %>%
+      dplyr::mutate(
+           y = base::ifelse(
+              test = y<start,
+              yes = start,
+              no = y
+            ),
+          z = base::ifelse(
+              test = z>end,
+              yes = end,
+              no = z
+            ),
+          int_score = (score*(z-y))
+        ) %>%
+      dplyr::group_by(name) %>%
+      dplyr::summarise(
+        sum = base::sum(int_score)/(end-start)
+      )
+    )
+  }
+```
+
+## [5.0.] Identify files
+#### Note: Negative lookahead used in str_subset()
+#### Note: Previous folder 'data/20181012_phes5Flox2_cux2Fezf2Pou3f2_tracks'
+#### files: "DichaeteGal4_DichaeteGFP_vs_DichaeteGal4_w1118.bedgraph"; "DichaeteGal4_EyelessGFP_vs_DichaeteGal4_w1118.bedgraph" etc.
+```{r}
+files <- base::list.files(
+      path = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+      full.names = TRUE
+    ) %>%
+  stringr::str_subset('quant.norm.bedgraph$') %>%
+  stringr::str_subset('^(?!.*unlogged)') %>%
+  stringr::str_subset('DichaeteGal4_')
+```
+
+## [5.1.] Read in all scores of all files 
+```{r}
+agg <- purrr::map_dfr(
+    .x= files,
+    .f = .GlobalEnv$reader,
+    regex = '^.*/(.*?_.*?)_.*$'
+  )
+```
+
+## [5.2.] Save & load agg
+```{r}
+base::saveRDS(
+    object = agg,
+    file = base::paste0(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_agg",
+        "_FDR", FDR,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+agg <- base::readRDS(
+  file = list.files(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("_agg")
+  )
+```
+
+## [5.3.] Transform scores into unlogged state
+```{r}
+agg_unlog <- dplyr::mutate(
+    .data = agg,
+    score = 2^score
+  )
+```
+
+## [5.4.] Apply aggregator() on tester peak set
+```{r}
+base::set.seed(0)
+tester <- dplyr::slice_sample(postClus, n = 10)
+
+res <- tester %>% 
+  dplyr::mutate(
+    scores = purrr::pmap(
+      .l = base::list(
+            chr,start,end
+          ),
+      .f = .GlobalEnv$aggregator,
+      agg = .GlobalEnv$agg
+      )
+    ) %>%
+  tidyr::unnest(
+      cols = "scores"
+    ) %>%
+  tidyr::spread(
+      key = "name",
+      value = "sum"
+    )
+```
+
+## [5.5.] Apply aggregator() on entire postClus dataset
+#### Note: previous specifications 'agg = .GlobalEnv$agg_unlog'
+```{r}
+var = base::c(
+    "chr","start","end","sign","clus"
+  )
+res <- postClus %>%
+  dplyr::distinct(!!!rlang::syms(var)) %>%
+  dplyr::mutate(
+      scores = purrr::pmap(
+        .l = base::list(
+            chr,start,end
+          ),
+        .f = .GlobalEnv$aggregator,
+        agg = .GlobalEnv$agg
+      )
+    ) %>%
+  tidyr::unnest(
+      cols = "scores"
+    ) %>%
+  tidyr::spread(
+      key = "name",
+      value = "sum"
+    )
+```
+
+## [5.6.] Parallel implementation of aggregator()
+#### 'dplyr::filter_all(preAgg,dplyr::all_vars(is.na(.))); 'dplyr::distinct(preAgg,sign)'; 'dplyr::distinct(res,sign)'
+```{r}
+preAgg <- dplyr::distinct(postClus,!!!rlang::syms(var))
+
+res <- foreach::foreach(i = 1:base::nrow(preAgg)) %dopar% {
+      preAgg %>%
+        dplyr::filter(dplyr::row_number() == i) %>%
+        dplyr::mutate(
+        scores = purrr::pmap(
+          .l = base::list(
+              chr,start,end
+            ),
+          .f = .GlobalEnv$aggregator,
+          agg = .GlobalEnv$agg
+        )
+      ) %>%
+      tidyr::unnest(
+          cols = "scores"
+        ) %>%
+      tidyr::spread(
+          key = "name",
+          value = "sum"
+        )
+    } %>%
+  dplyr::bind_rows(.)
+```
+
+## [5.7.] Save & load res for unlogged data
+#### 'res' is 'postAgg' in other workflows
+```{r}
+base::saveRDS(
+    object = res,
+    file = base::paste0(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_res",
+        "_FDR", FDR,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+res <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('_res_')
+  )
+```
+
+##-------------------------##
+##----kmeans_clustering----##
+##-------------------------##
+
+## [5.8.] Data wrangling
+#### Note: Include scale() to normalize variables
+```{r}
+groupsCur <- dplyr::pull(groups_,profile)
+
+resClus_ <- res %>%
+  dplyr::mutate(
+    id = stringr::str_c(
+      chr,start,end,sign,clus,
+      sep = "_"
+      )
+    ) %>%
+  base::as.data.frame()%>% 
+  tibble::column_to_rownames(.,var = "id") %>%
+  dplyr::select(!!groupsCur) %>%
+  stats::na.omit() %>%
+  base::scale()
+
+##Remove attributes
+##-----------------
+resClus <- resClus_[,]
+base::dim(resClus_)
+resClus[1:5,1:base::ncol(resClus)]
+```
+
+## [5.9.] Evaluate normalization into z-scores
+```{r}
+resClus %>%
+  base::as.data.frame() %>%
+  dplyr::summarise_each(
+    funs = dplyr::funs(
+        mean = mean,
+        sd = sd
+      )
+    ) %>%
+  tidyr::gather(
+      key = "comb",
+      value = "value"
+    ) %>%
+  dplyr::mutate(
+    param = stringr::str_replace(
+        string = comb,
+        pattern = '.*_.*_(.*)',
+        replacement = '\\1'
+      ),
+    group = stringr::str_replace(
+        string = comb,
+        pattern = '(.*_.*)_.*',
+        replacement = '\\1'
+      )
+    ) %>%
+  dplyr::select(2:4) %>% 
+  tidyr::spread(
+      key = "param",
+      value = "value"
+    )
+```
+
+## [5.10.] Save & load scaled resClus
+```{r}
+base::saveRDS(
+    object = resClus,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resClus_DichaeteOnly_zscores",
+        "_FDR", FDR,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+resClus <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('_resClus_')
+  )
+```
+
+## [5.11.] Determine optimal amount of clusters/cluster centers
+```{r}
+seed = 0L
+base::set.seed(seed)
+
+factoextra::fviz_nbclust(
+    x = resClus, 
+    FUNcluster = kmeans,
+    method = "gap_stat"
+  )
+```
+
+##<<necessary?_start>>
+
+## [5.12.] Save plot
+```{r}
+outfile <- base::paste0(
+    here::here("results/20190901_DichaeteGal4_DGrhEy_clustering/"),
+    base::format(base::Sys.time(), "%Y%m%d"),
+    "_resClus",
+    "_NrClusters",
+    "_FDR", FDR,
+    "_seed", seed,
+    ".pdf"
+  )
+
+grDevices::pdf(
+    outfile,
+    ".pdf",
+    width = 5,
+    height = 5
+  )
+base::print(
+    factoextra::fviz_nbclust(
+      x = resClus, 
+      FUNcluster = kmeans,
+      method = "gap_stat"
+    )
+  )
+grDevices::dev.off()
+```
+
+##<<necessary?_end>>
+
+## [5.13.] clValid dependent validation of clusters
+```{r}
+clusVal <- clValid::clValid(
+    obj = base::as.matrix(resClus),
+    nClust = base::seq(2,9,1),
+    clMethods = base::c("hierachical", "kmeans", "pam"),
+    validation = base::c("internal", "stability")
+  )
+clValid::summary(clusVal)
+```
+
+##<<necessary?_start>>
+
+## [5.14.] Save & load clValid-summary
+```{r}
+base::saveRDS(
+    object = clusVal,
+    file = base::paste0(
+      here::here("data/20190901_DichaeteGal4_DGrhEy_clustering/"),
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_clusVal",
+      "_FDR", FDR,
+      "_seed", seed,
+      ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+clusVal <- base::readRDS(
+    file = list.files(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('clusVal')
+  )
+```
+
+##<<necessary?_end>>
+
+## [5.15.] Bayesian information criterion for expectation maximization
+##<<necessary?_start>>
+#### Note: 'scale(motifClus)' and 'motifClus' represented by 18 clusters
+##<<necessary?_end>>
+```{r}
+base::set.seed(0)
+tmp <- mclust::Mclust(
+  data = base::as.matrix(resClus),
+  G = 1:20
+)
+
+base::dim(tmp$z)[2]
+base::plot(tmp)
+```
+
+##-------------------------------##
+##----Parallel_implementation----##
+##-------------------------------##
+
+## [6.0.] Prepare data
+```{r}
+preKclus <- tibble::as_tibble(
+    x = resClus,
+    rownames = "id"
+  )
+```
+
+## [6.1.] Build 'options'-overview table
+```{r}
+algorithms <- base::c(
+    "Hartigan-Wong", "Lloyd", "MacQueen"
+  )
+clusters <- base::seq(4,10,1)
+
+options <- tibble::tibble(
+    clusChos = base::sort(
+        base::rep(clusters,base::length(algorithms))
+      ),
+    algor = base::rep(
+        algorithms, base::length(clusters)
+      )
+    ) %>%
+  dplyr::mutate(
+    newData = purrr::map(
+      .x = algor,
+      .f = function(x){
+        return(
+          tibble::tibble(
+              seed = base::seq(1,1000,1)
+            )
+          )
+        }
+      )
+    ) %>%
+  tidyr::unnest(
+      cols = "newData"
+    )
+```
+
+## [6.2.] Evaluate options
+```{r}
+options %>%
+  dplyr::distinct(clusChos,seed,algor) %>%
+  base::nrow()
+```
+
+## [6.3.] Run all kmeans clustering jobs parallel
+```{r}
+runs <- foreach::foreach(i=1:base::nrow(options), .packages = "cluster") %dopar% {
+  
+    df <- dplyr::filter(options,dplyr::row_number()==i)
+    alg = dplyr::pull(df,algor)
+    se = dplyr::pull(df,seed)
+    cent = dplyr::pull(df,clusChos)
+    
+    base::set.seed(se)
+    postKclus <- stats::kmeans(
+       x =  tibble::column_to_rownames(preKclus,"id"),
+       centers = cent,
+       nstart = 25,
+       iter.max = 1000,
+       algorithm = alg
+      )
+    kcluster <- tibble::tibble(
+        id = base::names(postKclus$cluster),
+        kclus = postKclus$cluster
+      )
+    sil <- cluster::silhouette(
+        x = dplyr::rename(kcluster, clustering = kclus),
+        dist = stats::dist(preKclus)
+      )
+    postSil_av <- sil[,1:3] %>%
+      tibble::as_tibble() %>%
+      dplyr::summarise(
+          mean = base::mean(sil_width)
+        ) %>%
+      base::unlist() %>%
+      base::unname()
+    
+    return(
+      dplyr::mutate(
+          .data = df,
+          meanSil = postSil_av
+        )
+      )
+    } %>%
+  dplyr::bind_rows()
+```
+
+## [6.4.] Save & load runs
+```{r}
+base::saveRDS(
+    object = runs,
+    file = base::paste0(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_runs",
+        "_FDR", FDR,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+runs <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20190901_DichaeteGal4_DGrhEy_clustering"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('runs')
+  )
+```
+
+## [6.5.] Read out optimal run
+```{r}
+runs %>%
+  dplyr::distinct(meanSil, .keep_all = TRUE) %>%
+  dplyr::arrange(dplyr::desc(meanSil))
+
+maxSil <- runs %>%
+  dplyr::summarise(max = base::max(meanSil)) %>%
+  dplyr::pull(max)
+
+runs %>%
+  dplyr::filter(meanSil == maxSil)
+
+runs %>%
+  dplyr::filter(clusChos == 8L) %>%
+  dplyr::arrange(dplyr::desc(meanSil))
+
+runs %>%
+  dplyr::group_by(clusChos,algor,meanSil) %>%
+  dplyr::summarise(sum = dplyr::n()) %>%
+  dplyr::arrange(dplyr::desc(meanSil),dplyr::desc(sum))
+```
+
+```{r}
+runs %>%
+  dplyr::group_by(clusChos,algor,meanSil) %>%
+  dplyr::summarise(sum = dplyr::n()) %>%
+  dplyr::mutate(
+      comb = sum*meanSil
+    ) %>% 
+  dplyr::arrange(dplyr::desc(comb))
+
+runs %>%
+  dplyr::filter(
+      clusChos == 5 &
+      algor == "Lloyd"
+    ) %>%
+  dplyr::group_by(meanSil) %>%
+  dplyr::summarise(sum = dplyr::n())
+```
+
+## [6.6.] Plot distribution of average silhouette widths
+#### Allows to identify stable solutions
+```{r}
+plot <- ggplot2::ggplot(
+      data = runs,
+      mapping = aes(
+        x = meanSil
+      )
+    ) +
+  geom_density() +
+  facet_wrap(
+      facets = clusChos ~ algor,
+      nrow = 1
+    ) +
+  scale_x_continuous(
+      limits = base::c(0.18,0.27), 
+      breaks = base::c(0.20,0.225,0.25)
+    ) +
+  theme_bw() +
+  theme(
+      axis.text.x = element_text(
+        angle = 90,
+        vjust = 0.5,
+        hjust = 1
+      ),
+      panel.spacing = grid::unit(0.1,"lines")
+    )
+base::print(plot)
+```
+
+## [6.7.] Save plot
+```{r}
+for(ext in c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190901_DichaeteGal4_DGrhEy_clustering/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_runs",
+          "_FDR", FDR,
+          ".", ext
+        ),
+      plot = plot,
+      device = ext,
+      dpi = 300,
+      width = 8,
+      height = 4
+    )
+  }
+```
+
+##--------------------------##
+##----Optimal_Clustering----##
+##--------------------------##
+
+## [5.16.] Perform clustering
+##<<unnecessary_start>>
+#### 'clusK' is 'kcluster' in '20181205_workflow_clustering.Rmd'
+#### 'resK' is 'postKclus' in '20181205_workflow_clustering.Rmd'
+##<<unnecessary_end>>
+```{r}
+seed = 0L
+base::set.seed(seed)
+clusChos = 6L
+algr = "Hartigan-Wong"
+
+resK <- stats::kmeans(
+    x = resClus,
+    centers = clusChos,
+    nstart = 25,
+    iter.max = 10000,
+    algorithm = algr
+  )
+
+clusK <- tibble::tibble(
+    id = base::names(resK$cluster),
+    kclus = resK$cluster
+  )
+```
+
+## [5.17.] Save & load resK
+```{r}
+base::saveRDS(
+    object = resK,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resK_DichaeteOnly_zscores",
+        "_clus", clusChos,
+        "_FDR", FDR,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+resK <- base::readRDS(
+    file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/")
+      ) %>%
+    stringr::str_subset('20211126_resK_')
+  )
+```
+
+## [5.18.] Visualize clusters
+```{r}
+factoextra::fviz_cluster(
+    object = resK,
+    data = resClus,
+    ellipse.type = "none",
+    palette = "jco",
+    ggtheme = ggplot2::theme_minimal(),
+    labelsize = 0
+  )
+```
+
+##-----------------------##
+##----Silhouette_plot----##
+##-----------------------##
+
+## [6.0.] Helper functions to generate injected y column
+```{r}
+sequencer <- function(clus,start,end,gap=3L){
+    return(
+      base::seq(
+        start + gap*(clus-1),
+        end + gap*(clus-1)
+      )
+    )
+  }
+```
+
+```{r}
+seqAdd <- function(df, gap=30L){
+  return(
+    df %>%
+      dplyr::mutate(
+          clus = base::as.integer(clus),
+          end = base::cumsum(amount),
+          start = end-amount+1,
+          seq = purrr::pmap(
+            .l = base::list(
+                clus,start,end
+              ),
+            .f = .GlobalEnv$sequencer,
+            gap = gap
+          )
+        ) %>%
+      tidyr::unnest(cols = "seq") %>%
+      dplyr::select(seq) %>%
+      base::unlist() %>%
+      base::unname()
+    )
+  }
+```
+
+## [6.1.] Helper function for geom_rect()
+```{r}
+rectAdd <- function(df, gap=30L, groups=groups){
+    return(
+      df %>%
+        dplyr::mutate(
+          end = base::cumsum(amount),
+          start = end-amount+1,
+          startY = start+gap*(clus-1),
+          endY = end+gap*(clus-1),
+          startX = groups$profile[1],
+          endX = groups$profile[base::nrow(groups)]
+        ) %>%
+      dplyr::select(1,5:8)
+    )
+  }
+```
+
+## [6.2.] Run silhouette function
+#### evaluate with 'sil[1:5, 1:3]'
+```{r}
+sil <- cluster::silhouette(
+    x = dplyr::rename(clusK, clustering = kclus),
+    dist = stats::dist(resClus)
+  )
+
+factoextra::fviz_silhouette(sil)
+```
+
+## [6.3.] Integrate id's into silhouette results
+```{r}
+resSil <- sil[,1:3] %>%
+  tibble::as_tibble() %>%
+  dplyr::bind_cols(
+      dplyr::select(clusK,id),
+      .
+    ) %>%
+  dplyr::arrange(
+      cluster, dplyr::desc(sil_width)
+    )
+```
+
+## [6.4.] Save & load resSil
+```{r}
+base::saveRDS(
+    object = resSil,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resSil_DichaeteOnly_zscores",
+        "_clus", clusChos,
+        "_FDR", FDR,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+resSil <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('20190424_resSil_')
+  )
+```
+
+## [6.5.] Prepare data for custome silhouette plot
+```{r}
+tmp <- resSil %>%
+  dplyr::mutate(
+    cluster = base::factor(
+      x = cluster,
+      levels = base::seq(1,base::nrow(resK$centers),1),
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(cluster,sil_width)
+
+clusDis <- resSil %>%
+  dplyr::group_by(cluster) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus=cluster)
+
+tmp <- tmp %>%
+  dplyr::mutate(
+      yInj = .GlobalEnv$seqAdd(clusDis, gap=100L)
+    ) %>%
+ dplyr::arrange(yInj)
+
+resSil_av <- sil[,1:3] %>%
+  tibble::as_tibble() %>%
+  dplyr::summarise(mean = base::mean(sil_width)) %>%
+  base::round(.,digits = 2) %>%
+  base::unlist() %>%
+  base::unname()
+```
+
+## [6.6.] Plot silhouettes
+```{r}
+plot_sil <- ggplot2::ggplot(
+      data = tmp,
+      mapping = aes(
+          x = yInj,
+          y = sil_width,
+          color = cluster,
+          fill = cluster
+        ),
+      colour = "transparent"
+    ) +
+  geom_bar(
+      stat = "identity"
+    ) +
+  geom_hline(
+      yintercept = resSil_av,
+      linetype = "dashed"
+    ) +
+  coord_flip() +
+  scale_fill_manual(
+      limits = base::seq(1,base::nrow(resK$centers),1),
+      breaks = base::seq(1,base::nrow(resK$centers),1),
+      labels = base::seq(1,base::nrow(resK$centers),1),
+      values = cols3[1:nrow(resK$centers)]
+    ) +
+  scale_colour_manual(
+      limits = base::seq(1,base::nrow(resK$centers),1),
+      breaks = base::seq(1,base::nrow(resK$centers),1),
+      labels = base::seq(1,base::nrow(resK$centers),1),
+      values = cols3[1:nrow(resK$centers)]
+    ) +
+  theme_bw() +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      aspect.ratio = 2,
+      axis.title = element_blank()
+    ) +
+  guides(
+    fill = guide_legend(
+      label.position = "right",
+      title.position = "left",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      )
+    )
+  )
+base::print(plot_sil)
+```
+
+## [6.7.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_silhouette_DichaeteOnly_zscores",
+          "_clus", clusChos,
+          "_FDR", FDR,
+          "_algr", stringr::str_replace(algr, "-",""),
+          "_seed", seed,
+          ".", ext
+        ),
+      plot = plot_sil,
+      device = ext,
+      dpi = 300,
+      width = 3,
+      height = 6
+    )
+  }
+```
+
+##--------------------##
+##----Combine_data----##
+##--------------------##
+
+## [6.8.] Include k-means cluster assignment in res
+```{r}
+columns_ <- base::c(
+    "id","chr","start","end",
+    "sign","clus","kclus"
+  )
+columns <- groups %>%
+  dplyr::pull(profile) %>%
+  stringr::str_subset('DichaeteGal4') %>%
+  base::append(
+      tidyselect::all_of(columns_),.
+    )
+
+resKclus_ <- res %>%
+  dplyr::mutate(
+      id = stringr::str_c(
+        chr,start,end,sign,clus,
+        sep = "_"
+      )
+    ) %>%
+  dplyr::left_join(
+      x = .,
+      y = clusK,
+      by = "id"
+    ) %>%
+  dplyr::arrange(kclus) %>% 
+  dplyr::select(columns)
+```
+
+## [6.9.] Include resSil cluster positions
+```{r}
+resKclus <- dplyr::left_join(
+    x = resKclus_,
+    y = dplyr::select(resSil,id,sil_width),
+    by = "id"
+  )
+```
+
+## [6.10.] Save & load resKclus
+```{r}
+base::saveRDS(
+    object = resKclus,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resKclus_DichaeteOnly_zscores",
+        "_clus", clusChos,
+        "_FDR", FDR,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+resKclus <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/")
+      ) %>%
+    stringr::str_subset('20211126_resKclus_')
+  )
+```
+
+```{r}
+utils::write.table(
+    x = resKclus,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resKclus_DichaeteOnly_zscores",
+        "_clus", clusChos,
+        "_FDR", FDR,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".tsv"
+      ),
+    sep = "\t",
+    eol = "\n",
+    col.names = TRUE,
+    row.names = FALSE,
+    quote = FALSE
+  )
+```
+
+##-----------------------##
+##----Write_bed_files----##
+##-----------------------##
+
+## [6.11.] Write_out_bed_files
+```{r}
+coln <- base::c(
+    "chr","start","end",
+    "name","score","strand",
+    "thickStart","thickEnd","color"
+  )
+chroms <- sel_chrom %>%
+  purrr::discard(.,~.x=="MT") %>%
+  base::paste0("chr",.)
+
+res_bed <- resKclus %>%
+  dplyr::mutate(
+    chr = stringr::str_c("chr",chr),
+    chr = base::factor(
+        x = chr,
+        levels = chroms,
+        ordered = TRUE
+      ),
+    name = purrr::pmap_chr(
+        .l = base::list(
+            kclus,sign
+          ),
+        .f = stringr::str_c,
+        sep = "_"
+      ),
+    score = "0",
+    strand = "*",
+    thickStart = start,
+    thickEnd = end,
+    color = purrr::map_chr(
+        .x = kclus,
+        .f = ~ cols3[.x]
+      )
+    ) %>%
+  dplyr::select(tidyselect::all_of(coln)) %>%
+  dplyr::arrange(chr,start,end)
+```
+
+## [6.12.] Evaluate res_bed
+```{r}
+dplyr::distinct(res_bed,name,color)
+```
+
+## [6.13.] Write out res_bed
+```{r}
+trackline <- base::paste(
+    "track name=\"FDR150_seed0\"",
+    "description=\"FDR150_seed0\"",
+    "visibility=2",
+    "itemRgb=\"On\"",
+    sep = "\t"
+  )
+
+fn <- base::paste0(
+    here::here("data/20190901_DichaeteGal4_DGrhEy_clustering/"),
+    "Dichaete_comKclus",
+    "_FDR", FDR,
+    "_clus", clusChos,
+    "_algr", stringr::str_replace(algr, "-",""),
+    "_seed", seed,
+    ".reproPeak.bed"
+  )
+
+utils::write.table(
+    x = trackline,
+    file = fn,
+    sep = "\n",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = FALSE,
+    qmethod = "escape",
+    quote = FALSE
+  )
+
+utils::write.table(
+    x = res_bed,
+    file = fn,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = FALSE,
+    qmethod = "escape",
+    quote = FALSE,
+    append = TRUE
+  )
+```
+
+##<<unnecessary_start>>
+
+##--------------------##
+##----PCA_Analysis----##
+##--------------------##
+
+## [5.21.] PCA analysis
+##### Note: 'factoextra::fviz_pca_ind(pca,label = "none",habillage = res_mclus$Mclus)'
+```{r}
+pca <- stats::prcomp(
+    x = resKclus %>%
+     dplyr::arrange(clus,chr,start) %>% 
+      dplyr::select(!!groups$profile)
+  )
+
+pca_sum <- factoextra::facto_summarize(
+    X = pca,
+    element = "ind",
+    axes = base::c(1,2,3,4),
+    result =  base::c("coord", "contrib", "cos2")
+  )
+
+pca_contr <- factoextra::facto_summarize(
+    X = pca,
+    element = "var",
+    axes = base::c(1,2,3,4),
+    result =  base::c("coord", "contrib", "cos2")
+  )
+
+res_pca <- resKclus %>%
+ dplyr::arrange(clus,chr,start) %>%
+  cbind(.,pca_sum) %>%
+  dplyr::mutate(
+    kclus = base::factor(
+      kclus,
+      levels = base::seq(1, nrow(resK$centers), 1),
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(kclus)
+```
+
+## [5.22.] Save resKclus
+```{r}
+base::saveRDS(
+  object = res_pca,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181207_res_pca_FDR25_seed0_k9_zscores.rds"),
+  compress = TRUE
+)
+```
+
+## [5.23.] Load resKclus
+```{r}
+res_pca <- base::readRDS(
+    file =  here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181207_res_pca_FDR25_seed0_k9_zscores.rds")
+  )
+```
+
+## [5.18.] Helper function huller() for convex hulls
+##### Note: reduce hulls by 'res_pca %>% dplyr::filter(Dim.3 <= 4L & Dim.3 >=-4L)'
+```{r}
+dimX = 1L
+dimY = 2L
+colX <-base::paste0("Dim.",dimX)
+colY <-base::paste0("Dim.",dimY)
+
+huller <- function(df){
+    df[grDevices::chull(df[,colX],df[,colY]),]
+  } 
+
+hulls <- plyr::ddply(res_pca,"kclus",huller)
+```
+
+## [5.19.] Print pca plot with convex hulls
+```{r}
+ plot_pca <- ggplot2::ggplot() +
+  geom_point(
+    data = res_pca,
+    aes(
+      x=res_pca[,colX],
+      y=res_pca[,colY],
+      fill = kclus
+    ),
+    alpha=0.6,
+    colour="black",
+    pch = 21,
+    stroke = 0.1
+  ) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_polygon(
+    data = hulls,
+    aes(
+      x=hulls[,colX],
+      y=hulls[,colY],
+      fill = kclus,
+      colour = kclus
+    ),
+    alpha = 0.15
+  ) +
+  scale_fill_manual(
+    limits = base::seq(1,base::nrow(resK$centers),1),
+    breaks = base::seq(1,base::nrow(resK$centers),1),
+    labels = base::seq(1,base::nrow(resK$centers),1),
+    values = cols3[1:nrow(resK$centers)],
+    guide = guide_legend(
+      label.position = "right",
+      title.position = "left",
+      direction = "vertical",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      )
+    )
+  ) +
+  scale_colour_manual(
+    limits = base::seq(1,base::nrow(resK$centers),1),
+    breaks = base::seq(1,base::nrow(resK$centers),1),
+    labels = base::seq(1,base::nrow(resK$centers),1),
+    values = cols3[1:nrow(resK$centers)],
+    guide = "none"
+  ) +
+  theme(
+    legend.position = "right"
+  )
+
+base::print(plot_pca)
+```
+
+## [5.20.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181207_pcaCustome_FDR25_seed0_DichOgre_"),
+      "Dim", dimX, "_",
+      "Dim", dimY, "_",
+      "k", nrow(resK$centers),
+      "_zscores.",
+      ext
+    ),
+    plot = plot_pca,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 4
+  )
+}
+```
+
+##<<unnecessary_end>>
+
+##-----------------------------##
+##----Cluster_visualization----##
+##-----------------------------##
+
+## [7.0.] Load resKclus
+```{r}
+resKclus <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/")
+      ) %>%
+    stringr::str_subset('_resKclus')
+  )
+```
+
+## [7.1.] Load resK
+```{r}
+resK <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/")
+      ) %>%
+    stringr::str_subset('_resK_')
+  )
+```
+
+## [7.2.] Prepare for visualization
+##### Note: generate 'idLevels' vector by 'tmp %>% dplyr::group_by(id) %>% distinct(id) %>% base::unlist() %>% base::unname()'
+```{r}
+tmp <- resKclus %>%
+dplyr::as_tibble() %>% 
+  dplyr::mutate(
+      kclus = base::factor(
+        x = kclus,
+        levels = base::seq(1,base::nrow(resK$centers)),
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(kclus,sil_width)
+
+clusDis <- resKclus %>%
+  dplyr::group_by(kclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus = kclus)
+
+tracks <- dplyr::pull(groups_,profile)
+
+resViz <- tmp %>%
+  dplyr::mutate(
+      yInj = .GlobalEnv$seqAdd(clusDis, gap=100L)
+    ) %>%
+  tidyr::gather(
+      key = "track",
+      value = "bindInt",
+      -id,-chr,-start,
+      -end,-sign,-clus,
+      -kclus,-yInj,-sil_width
+    ) %>% 
+  dplyr::mutate(
+    track = stringr::str_replace(
+        string = track,
+        pattern = '^.*_(.*)GFP$',
+        replacement = '\\1'
+      ),
+    track = base::factor(
+        x = track,
+        levels = base::c("Dichaete","Grainyhead","Eyeless"),
+        ordered = TRUE
+      )
+    ) %>%
+ dplyr::arrange(kclus,yInj,track)
+
+rect <- clusDis %>%
+  .GlobalEnv$rectAdd(
+      df = .,
+      gap = 100L,
+      groups = groups_
+    ) %>%
+  dplyr::bind_cols(
+      .,cols3[1:base::nrow(resK$centers)]
+    ) %>%
+  dplyr::mutate(
+    clus = base::factor(
+        x = clus,
+        levels = base::seq(1,base::nrow(resK$centers),1),
+        ordered = TRUE
+      ),
+    startX = stringr::str_replace(
+        string = startX,
+        pattern = '^.*_(.*)GFP$',
+        replacement = '\\1'
+      ),
+    endX = str_replace(
+        string = endX,
+        pattern = '^.*_(.*)GFP$',
+        replacement = '\\1'
+      )
+    )
+
+rangE <- resViz %$%
+  base::range(bindInt)
+```
+
+## [7.3.] Evaluate the data
+```{r}
+resViz %>%
+ dplyr::arrange(kclus,sil_width) %>% 
+  dplyr::group_by(kclus) %>% 
+  dplyr::filter(
+      dplyr::row_number() %in% base::c(1,n())
+    )
+```
+
+## [7.4.] Save & load resViz
+```{r}
+base::saveRDS(
+    object = resViz,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_resViz_DichaeteOnly_zscores",
+        "_clus", clusChos,
+        "_FDR", FDR,
+        "_algr", stringr::str_replace(algr, "-",""),
+        "_seed", seed,
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+resViz <- base::readRDS(
+    file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/")
+      ) %>%
+    stringr::str_subset('20190424_resViz_')
+  )
+```
+
+## [7.5.] DataViz
+```{r}
+plot_heat <- ggplot2::ggplot() +
+  geom_tile(
+      data = resViz,
+      mapping = aes(
+          x = track,
+          y = yInj,
+          fill = bindInt
+        ),
+      alpha = 1
+    ) +
+  theme_bw() +
+  theme(
+      panel.border = element_blank(),
+      panel.grid.major = element_blank(),
+      axis.text.y = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.title = element_blank(),
+      axis.text.x = element_text(
+        angle = 90,
+        vjust = 0.5,
+        hjust = 1
+      ),
+      aspect.ratio = 2
+    ) +
+  scale_fill_gradient2(
+      limits = base::c(rangE[1],rangE[2]),
+      low = "blue",
+      mid = "white",
+      high = "red"
+    ) +
+  geom_rect(
+      data = rect,
+      mapping = aes(
+          ymin = startY,
+          ymax = endY
+        ),
+      xmin = 0.5,
+      xmax = 3.5,
+      fill = "transparent",
+      color = "black"
+    ) +
+  geom_rect(
+      data = rect,
+      mapping = aes(
+          ymin = startY,
+          ymax = endY,
+          fill = clus
+        ),
+      xmin = -0.15,
+      xmax = 0.35,
+      alpha = 1,
+      color = "transparent",
+      fill = cols3[1:nrow(resK$centers)]
+    ) +
+  geom_text(
+      data = rect,
+      mapping = aes(
+          x = 0.1,
+          y = base::round((endY-startY)/2)+startY,
+          label = clus
+        ),
+      angle = 90,
+      size = 3
+    ) +
+  scale_x_discrete(
+      expand = ggplot2::expansion(
+        add = base::c(1.25,0.6)
+      )
+    ) +
+  scale_y_discrete(
+      expand = ggplot2::expansion(
+        add = base::c(80L,80L)
+      )
+    ) +
+  guides(
+      fill = guide_colourbar(
+        label.position = "right",
+        title.position = "left",
+        title.theme = element_text(
+            angle = 90,
+            hjust = 0.5
+          ),
+        ticks=T,
+        nbin=100,
+        barheight=10,
+        label=T,
+        barwidth=0.5
+      )
+    )
+base::print(plot_heat)
+```
+
+## [7.6.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_resKclus_heatmap_DichaeteOnly_zscores",
+          "_clus", clusChos,
+          "_FDR", FDR,
+          "_algr", stringr::str_replace(algr, "-",""),
+          "_seed", seed,
+          ".", ext
+        ),
+      plot = plot_heat,
+      device = ext,
+      dpi = 300,
+      width = 4,
+      height = 8
+    )
+  }
+```
+
+##<<unnecessary_start>>
+
+##---------------------##
+##----tSNE_analysis----##
+##---------------------##
+
+## [5.23.] Prepare data for tSNE
+```{r}
+tmp <- resKclus %>%
+ dplyr::arrange(kclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+```
+
+## [5.24.] Run tSNE reduction with seed0
+```{r}
+set.seed(0)
+res_tsne <-  Rtsne::Rtsne(
+  X = tmp,
+  dims = 2,
+  perplexity = 30,
+  verbose = TRUE,
+  max_iter = 2000
+)
+```
+
+## [5.25.] Prepare data for visualization
+```{r}
+model <- base::as.data.frame(res_tsne$Y) %>%
+  cbind(
+    .,
+    resKclus %>%
+     dplyr::arrange(kclus,sil_width) %>%
+      dplyr::select(1,7)
+  ) %>%
+  dplyr::mutate(
+    kclus = base::factor(
+      kclus,
+      levels = base::seq(1,base::nrow(resK$centers),1),
+      ordered = TRUE
+    )
+  )
+```
+
+## [5.26.] Visualize tSNE
+```{r}
+plot_tsne <- ggplot2::ggplot(
+    data = model,
+    aes(
+      x = V1,
+      y = V2,
+      colour = kclus
+    )
+  ) +
+  geom_point(
+    size = 0.25
+  ) +
+  scale_colour_manual(
+    limits = base::seq(1,base::nrow(resK$centers),1),
+    breaks = base::seq(1,base::nrow(resK$centers),1),
+    labels = base::seq(1,base::nrow(resK$centers),1),
+    values = cols3[1:nrow(resK$centers)],
+    guide = guide_legend(
+      label.position = "right",
+      title.position = "left",
+      direction = "vertical",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      )
+    )
+  )
+base::print(plot_tsne)
+```
+
+## [5.27.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181207_resKclus_RtSNE_FDR25_seed0_iter2000_perpl30_dims2_V1_V2_k9_zscores."),
+      ext
+    ),
+    plot = plot_tsne,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 5
+  )
+}
+```
+
+##<<unnecessary_end>>
+
+##------------------------##
+##----Cluster_analysis----##
+##------------------------##
+
+## [5.23.] Change format of tibble
+```{r}
+coln <- groups %>%
+  dplyr::filter(
+      stringr::str_detect(profile,"^Dichaete")
+    ) %>% 
+  dplyr::pull(profile) %>%
+  base::append(base::c("id","kclus"),.)
+
+lev <- base::c(
+    "Dichaete","Grainyhead","Eyeless"
+  )
+
+tmp <- resKclus %>%
+  dplyr::select(coln) %>%
+  tidyr::gather(
+      key = "track",
+      value = "bind_int",
+      -id,-kclus
+    ) %>%
+  dplyr::mutate(
+    track = base::factor(
+        x = track,
+        levels = dplyr::pull(groups_,profile),
+        ordered = TRUE
+      ),
+    kclus = base::factor(
+      x = kclus,
+      levels = base::seq(base::nrow(resK$centers),1, -1),
+      ordered = TRUE
+    ) 
+  ) %>%
+ dplyr::arrange(kclus,id,track)
+```
+
+## [5.24.] Plot mean intensities
+```{r}
+plot_stats <- ggplot2::ggplot(
+      data = tmp,
+      aes(
+        x = track,
+        y = 2^bind_int
+      )
+    ) +
+  geom_boxplot(
+      outlier.shape = NA
+    ) +
+  scale_y_continuous(
+      position = "right",
+      limits = base::c(0,3),
+      breaks = base::c(0,1,2,3)
+    ) +
+  facet_grid(
+      facets = kclus ~ .,
+      switch = "y"
+    ) +
+  geom_hline(
+      yintercept = 1,
+      linetype = "dashed"
+    ) +
+  theme(
+      axis.text.x = element_text(
+          angle = 90,
+          hjust = 1,
+          vjust = 0.5
+        ),
+      axis.title.x = element_blank(),
+      axis.title = element_blank(),
+      aspect.ratio = 0.8,
+      strip.placement = "outside"
+    )
+base::print(plot_stats)
+```
+
+## [5.25.] Add colours to strips according to cluster affiliation
+```{r}
+g <- ggplot2::ggplot_gtable(
+    ggplot2::ggplot_build(plot_stats)
+  )
+strip_l <- base::which(
+    base::grepl('strip-l', g$layout$name)
+  )
+
+k = 1L
+for(i in strip_l){
+    j <- base::which(
+      base::grepl(
+          pattern = 'rect',
+          x = g$grobs[[i]]$grobs[[1]]$childrenOrder
+        )
+      )
+    g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- base::rev(
+        cols3[1:base::nrow(resK$centers)]
+      )[k]
+    k = k+1
+    base::cat("k:\t", k,"\ti:\t",i,"\n")
+  }
+grid::grid.draw(g)
+base::plot(g)
+```
+
+## [5.24.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_resKclus_boxplot_zscores",
+          "_FDR", FDR,
+          "_clus", clusChos,
+          "_algr", stringr::str_replace(algr, "-",""),
+          "_seed", seed,
+          "_outlierNA",
+          ".", ext
+        ),
+      plot = plot_stats,
+      device = ext,
+      dpi = 300,
+      width = 2,
+      height = 12
+    )
+  }
+```
+
+##<<unnecessary_start>>
+
+## [5.25.] phes5-to-flox2 ratios
+```{r}
+clusK <- tibble::tibble(
+    id = base::names(resK$cluster),
+    kclus = resK$cluster
+  )
+
+resKclus <- res %>%
+  dplyr::mutate(
+    id = stringr::str_c(
+      chr,start,end,sign,clus,
+      sep = "_"
+      )
+  ) %>%
+  merge(
+    .,
+    clusK,
+    by = "id"
+  )
+
+resKclus <- resKclus %>%
+  dplyr::mutate(
+    fezf2 = log2(2^(flox2_fezf2)/2^(phes5_fezf2)),
+    cux2 = log2(2^(flox2_cux2)/2^(phes5_cux2)),
+    pou3f2 = log2(2^(flox2_pou3f2)/2^(phes5_pou3f2))
+  ) %>%
+  dplyr::select(1:6,13:16) %>%
+  gather(
+    key = "track",
+    value = "bind_rat",
+    -id,-chr,-start,-end,-sign,-clus,-kclus
+  )
+```
+
+## [5.26.] Convert variables into base::factors for plotting
+```{r}
+id_levels <- resKclus %>%
+  dplyr::select(id) %>%
+  base::unlist() %>%
+  base::unname()%>% 
+  unique
+
+resKclus <- resKclus %>%
+  dplyr::mutate(
+    id = base::factor(
+      id,
+      levels = id_levels,
+      ordered = TRUE
+    ),
+    track = base::factor(
+      track,
+      levels = base::c("cux2","fezf2", "pou3f2"),
+      ordered = TRUE
+    )
+  )
+```
+
+## [5.27.] Plot phes5-to-flox2 ratios
+```{r}
+plot_ratio <- ggplot2::ggplot(
+    data = resKclus,
+    aes(
+      x = track,
+      y = bind_rat
+    )
+  ) +
+  geom_boxplot() +
+  facet_wrap(
+    ~kclus,
+    nrow = 1
+  ) +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1,
+      vjust = 0.5
+    )
+  )
+base::print(plot_ratio)
+```
+
+## [5.28.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181012_phes5Flox2_cux2Fezf2Pou3f2_reproPeak/20181022_resKclus_ratios_FDR150."),
+      ext
+    ),
+    plot = plot_ratio,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 4
+  )
+}
+```
+
+## [5.29.] Apply adegenet package to FDR25 data 
+##### Note: __Deprecated__
+```{r}
+tmp <- resKclus %>%
+ dplyr::arrange(kclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+
+set.seed(0)
+adeK <- adegenet::find.clusters(
+  x = tmp,
+  max.n.clust = 40,
+  n.pca = 3,
+  choose.n.clust = FALSE,
+  criterion = "diffNgroup",
+  stat = "BIC",
+  n.iter=2000
+)
+adeK$stat
+
+adeDAPC <- adegenet::dapc(
+  x = tmp,
+  grp = adeK$grp
+)
+ade4::scatter(adeDAPC)
+```
+
+##----------------------##
+##----PAM_clustering----##
+##----------------------##
+
+## [6.0.] Prepare data for PAM analysis
+```{r}
+tmp <- resKclus %>%
+ dplyr::arrange(kclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+```
+
+## [6.1.] Partitioning around medoids - PAM
+```{r}
+set.seed(0)
+
+pam <- cluster::pam(
+    x = tmp,
+    k = 9
+  )
+```
+
+## [6.2.] Validation via silhouette plots
+```{r}
+sil <- cluster::silhouette(
+    x = pam$clustering,
+    dist = dist(tmp)
+  )
+
+factoextra::fviz_silhouette(sil)
+```
+
+## [6.3.] Include cluster assignments
+```{r}
+res_pam <- tibble::tibble(
+    id = base::names(pam$clustering),
+    pamclus = pam$clustering
+  ) %>%
+  base::merge(
+    x = .,
+    y = resKclus %>%
+     dplyr::arrange(kclus,sil_width),
+    by = "id"
+  )
+```
+
+## [6.4.] Save res_pam
+```{r}
+base::saveRDS(
+  object = res_pam,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181206_res_pam_FDR25_seed0_k9.rds"),
+  compress = TRUE
+)
+```
+
+## [6.5.] PAM via fpc package
+```{r}
+set.seed(0)
+
+res_pamk <- fpc::pamk(
+    data = resClus,
+    krange = 3:7,
+    criterion = "asw"
+  )
+
+sil <- cluster::silhouette(
+    x = res_pamk$pamobject$clustering,
+    dist = dist(resClus)
+  )
+
+factoextra::fviz_silhouette(sil)
+```
+
+## [6.6.] Prepare data for tSNE
+```{r}
+tmp <- res_pam %>%
+ dplyr::arrange(pamclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+```
+
+## [6.7.] Run tSNE reduction with seed0
+```{r}
+set.seed(0)
+res_tsne <-  Rtsne::Rtsne(
+  X = tmp,
+  dims = 2,
+  perplexity = 30,
+  verbose = TRUE,
+  max_iter = 2000
+)
+```
+
+## [6.8.] Prepare data for visualization
+```{r}
+model <- base::as.data.frame(res_tsne$Y) %>%
+  cbind(
+    .,
+    res_pam %>%
+     dplyr::arrange(pamclus,sil_width) %>%
+      dplyr::select(1,2)
+  ) %>%
+  dplyr::mutate(
+    pamclus = base::factor(
+      pamclus,
+      levels = base::seq(1,max(unique(res_pam$pamclus)),1),
+      ordered = TRUE
+    )
+  )
+```
+
+## [6.9.] Visualize tSNE
+```{r}
+plot_tsne <- ggplot2::ggplot(
+    data = model,
+    aes(
+      x = V1,
+      y = V2,
+      colour = pamclus
+    )
+  ) +
+  geom_point(
+    size = 0.25
+  ) +
+  scale_colour_manual(
+    limits = base::seq(1,max(unique(res_pam$pamclus)),1),
+    breaks = base::seq(1,max(unique(res_pam$pamclus)),1),
+    labels = base::seq(1,max(unique(res_pam$pamclus)),1),
+    values = cols3[1:max(unique(res_pam$pamclus))],
+    guide = guide_legend(
+      label.position = "right",
+      title.position = "left",
+      direction = "vertical",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      )
+    )
+  )
+base::print(plot_tsne)
+```
+
+## [6.10.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181206_res_pam_RtSNE_FDR25_seed0_iter2000_perpl30_dims2_V1_V2_k9."),
+      ext
+    ),
+    plot = plot_tsne,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 5
+  )
+}
+```
+
+## [6.11.] Prepare for visualization
+##### Note: generate 'idLevels' vector by 'tmp %>% dplyr::group_by(id) %>% distinct(id) %>% base::unlist() %>% base::unname()'
+```{r}
+tmp <- res_pam %>%
+  base::as.tibble %>% 
+  dplyr::mutate(
+    pamclus = base::factor(
+      pamclus,
+      levels = base::seq(1,max(unique(res_pam$pamclus))),
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(pamclus,sil_width)
+
+clusDis <- res_pam %>%
+  dplyr::group_by(pamclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus=pamclus)
+
+resViz <- tmp %>%
+  dplyr::mutate(
+    yInj = seqAdd(clusDis, gap=100L)
+  ) %>%
+  gather(
+    key = "track",
+    value = "bindInt",
+    -id,-chr,-start,-end,-sign,-clus,-kclus,-yInj,-sil_width,-pamclus
+  ) %>% 
+  dplyr::mutate(
+    track = base::factor(
+      track,
+      levels = groups$profile,
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(pamclus,yInj,track)
+
+rect <- rectAdd(clusDis, gap=100L) %>%
+  cbind(.,cols3[1:max(unique(res_pam$pamclus))]) %>%
+  dplyr::mutate(
+    clus = base::factor(
+      clus,
+      levels = base::seq(1,max(unique(res_pam$pamclus)),1),
+      ordered = TRUE
+    )
+  )
+
+rangE <- resViz %$%
+  range(bindInt)
+```
+
+## [6.12.] Evaluation of resViz
+```{r}
+resViz %>%
+ dplyr::arrange(pamclus,sil_width) %>% 
+  dplyr::group_by(pamclus) %>% 
+  dplyr::filter(row_number() %in% base::c(1,n()))
+```
+
+## [6.13.] Save resViz
+```{r}
+base::saveRDS(
+  object = resViz,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181206_resViz_of_res_pam_FDR25_seed0_k9.rds"),
+  compress = TRUE
+)
+```
+
+## [6.14.] DataViz
+```{r}
+plot_heat <- ggplot2::ggplot() +
+  geom_tile(
+     data = resViz,
+    aes(
+      x = track,
+      y = yInj,
+      fill = bindInt
+    ),
+    alpha = 1
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title = element_blank(),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1
+    ),
+    aspect.ratio = 2
+  ) +
+  scale_fill_gradient2(
+    limits = base::c(rangE[1],rangE[2]),
+    low = "darkblue",
+    mid = "white",
+    high = "darkred"
+  ) +
+  geom_rect(
+    data = rect,
+    aes(
+      ymin = rect$startY,
+      ymax = rect$endY
+    ),
+    xmin = 0.5,
+    xmax = 5.5,
+    fill = "transparent",
+    color = "black"
+  ) +
+  geom_rect(
+    data = rect,
+    aes(
+      ymin = rect$startY,
+      ymax = rect$endY,
+      fill = rect$clus
+    ),
+    xmin = -0.15,
+    xmax = 0.35,
+    alpha = 0.3,
+    color = "transparent",
+    fill = cols3[1:max(unique(res_pam$pamclus))]
+  ) +
+  geom_text(
+    data = rect,
+    aes(
+      x = 0.1,
+      y = base::round((rect$endY-rect$startY)/2)+rect$startY,
+      label = rect$clus
+    ),
+    angle = 90,
+    size = 3
+  ) +
+  scale_x_discrete(
+    expand = expand_scale(
+      add=c(1.25,0.6)
+    )
+  ) +
+  scale_y_discrete(
+    expand = expand_scale(
+      add = base::c(80L,80L)
+    )
+  ) +
+  guides(
+    fill = guide_colourbar(
+      label.position = "right",
+      title.position = "left",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      ),
+      ticks=T,
+      nbin=100,
+      barheight=10,
+      label=T,
+      barwidth=0.5
+    )
+  )
+base::print(plot_heat)
+```
+
+## [6.15.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181206_res_pam_heatmap_FDR25_seed0_k9."),
+      ext
+    ),
+    plot = plot_heat,
+    device = ext,
+    dpi = 300,
+    width = 4,
+    height = 8
+  )
+}
+```
+
+##-------------------------##
+##----BIC_EM_clustering----##
+##-------------------------##
+
+## [8.0.] Prepare data for BIC_EM
+```{r}
+tmp <- resKclus %>%
+ dplyr::arrange(kclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+```
+
+## [8.1.] Cluster data
+```{r}
+set.seed(0)
+fit <- mclust::Mclust(
+    data = tmp,
+    G=1:10
+  )
+
+summary(fit)
+fit$BIC
+plot(fit, what="BIC")
+```
+
+## [8.2.] Mclust package functions
+```{r}
+set.seed(0)
+mclust::clPairs(tmp)
+
+##Initialized by hierachical clustering
+BIC <- mclust::mclustBIC(
+    data = tmp,
+    G = 1:10
+  )
+
+##Based on Integrated Complete-data Likelihood
+mclust::mclustICL(
+    data = tmp,
+    G = 1:10
+  )
+
+##Bootstrap sequential LRT
+mclust::mclustBootstrapLRT(
+  data = tmp,
+  maxG = 10,
+  modelName = "VVV"
+)
+
+##Dimension reduction
+bic <- mclust::Mclust(
+    data = tmp,
+    x = BIC
+  )
+bicdr <- mclust::MclustDR(
+  object = bic
+  )
+plot(bicdr, what = "boundaries", ngrid = 200L)
+```
+
+## [8.3.] Generate cluster distribution table
+```{r}
+clusDis <- fitClus %>%
+  dplyr::group_by(Mclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus=Mclus)
+```
+
+## [8.4.] Validation via silhouette plots
+```{r}
+sil <- cluster::silhouette(
+    x = fit$classification,
+    dist = dist(tmp)
+  )
+
+factoextra::fviz_silhouette(sil)
+```
+
+## [8.5.] Generate cluster lookup table
+```{r}
+res_mclus <- tibble::tibble(
+    id = base::names(fit$classification),
+    Mclus = fit$classification
+  ) %>%
+  base::merge(
+    x = .,
+    y = resKclus %>%
+     dplyr::arrange(kclus,sil_width),
+    by = "id"
+  )
+```
+
+## [8.6.] Save res_mclus
+```{r}
+base::saveRDS(
+  object = res_mclus,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181206_res_mclus_FDR25_seed0_k9.rds"),
+  compress = TRUE
+)
+```
+
+## [8.7.] Prepare data for tSNE
+```{r}
+tmp <- res_mclus %>%
+ dplyr::arrange(Mclus,sil_width) %>%
+  dplyr::select(id, !!groups$profile) %>%
+  distinct(
+    DichaeteGal4_DichaeteGFP,
+    DichaeteGal4_EyelessGFP,
+    DichaeteGal4_GrainyheadGFP,
+    OgreGal4_DichaeteGFP,
+    OgreGal4_EyelessGFP,
+    .keep_all = TRUE
+  ) %>%
+  tibble::column_to_rownames(.,var = "id")
+```
+
+## [8.8.] Run tSNE reduction with seed0
+```{r}
+set.seed(0)
+res_tsne <-  Rtsne::Rtsne(
+  X = tmp,
+  dims = 2,
+  perplexity = 30,
+  verbose = TRUE,
+  max_iter = 2000
+)
+```
+
+## [8.9.] Prepare data for visualization
+```{r}
+model <- base::as.data.frame(res_tsne$Y) %>%
+  cbind(
+    .,
+    res_mclus %>%
+     dplyr::arrange(Mclus,sil_width) %>%
+      dplyr::select(1,2)
+  ) %>%
+  dplyr::mutate(
+    Mclus = base::factor(
+      Mclus,
+      levels = base::seq(1,max(unique(res_mclus$Mclus)),1),
+      ordered = TRUE
+    )
+  )
+```
+
+## [8.10.] Visualize tSNE
+```{r}
+plot_tsne <- ggplot2::ggplot(
+    data = model,
+    aes(
+      x = V1,
+      y = V2,
+      colour = Mclus
+    )
+  ) +
+  geom_point(
+    size = 0.25
+  ) +
+  scale_colour_manual(
+    limits = base::seq(1,max(unique(res_mclus$Mclus)),1),
+    breaks = base::seq(1,max(unique(res_mclus$Mclus)),1),
+    labels = base::seq(1,max(unique(res_mclus$Mclus)),1),
+    values = cols3[1:max(unique(res_mclus$Mclus))],
+    guide = guide_legend(
+      label.position = "right",
+      title.position = "left",
+      direction = "vertical",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      )
+    )
+  )
+base::print(plot_tsne)
+```
+
+## [8.11.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181206_res_mclus_RtSNE_FDR25_seed0_iter2000_perpl30_dims2_V1_V2_k10."),
+      ext
+    ),
+    plot = plot_tsne,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 5
+  )
+}
+```
+
+## [8.12.] Prepare for visualization
+##### Note: generate 'idLevels' vector by 'tmp %>% dplyr::group_by(id) %>% distinct(id) %>% base::unlist() %>% base::unname()'
+```{r}
+tmp <- res_mclus %>%
+  base::as.tibble %>% 
+  dplyr::mutate(
+    Mclus = base::factor(
+      Mclus,
+      levels = base::seq(1,max(unique(res_mclus$Mclus))),
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(Mclus,sil_width)
+
+clusDis <- res_mclus %>%
+  dplyr::group_by(Mclus) %>%
+  dplyr::summarise(amount = dplyr::n()) %>% 
+  dplyr::rename(., clus=Mclus)
+
+resViz <- tmp %>%
+  dplyr::mutate(
+    yInj = seqAdd(clusDis, gap=100L)
+  ) %>%
+  gather(
+    key = "track",
+    value = "bindInt",
+    -id,-chr,-start,-end,-sign,-clus,-kclus,-yInj,-sil_width,-Mclus
+  ) %>% 
+  dplyr::mutate(
+    track = base::factor(
+      track,
+      levels = groups$profile,
+      ordered = TRUE
+    )
+  ) %>%
+ dplyr::arrange(Mclus,yInj,track)
+
+rect <- rectAdd(clusDis, gap=100L) %>%
+  cbind(.,cols3[1:max(unique(res_mclus$Mclus))]) %>%
+  dplyr::mutate(
+    clus = base::factor(
+      clus,
+      levels = base::seq(1,max(unique(res_mclus$Mclus)),1),
+      ordered = TRUE
+    )
+  )
+
+rangE <- resViz %$%
+  range(bindInt)
+```
+
+## [8.13.] Evaluation of resViz
+```{r}
+resViz %>%
+ dplyr::arrange(Mclus,sil_width) %>% 
+  dplyr::group_by(Mclus) %>% 
+  dplyr::filter(row_number() %in% base::c(1,n()))
+```
+
+## [8.14.] Save resViz
+```{r}
+base::saveRDS(
+  object = resViz,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181206_resViz_of_res_mclus_FDR25_seed0_k9.rds"),
+  compress = TRUE
+)
+```
+
+## [8.15.] DataViz
+```{r}
+plot_heat <- ggplot2::ggplot() +
+  geom_tile(
+     data = resViz,
+    aes(
+      x = track,
+      y = yInj,
+      fill = bindInt
+    ),
+    alpha = 1
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title = element_blank(),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1
+    ),
+    aspect.ratio = 2
+  ) +
+  scale_fill_gradient2(
+    limits = base::c(rangE[1],rangE[2]),
+    low = "darkblue",
+    mid = "white",
+    high = "darkred"
+  ) +
+  geom_rect(
+    data = rect,
+    aes(
+      ymin = rect$startY,
+      ymax = rect$endY
+    ),
+    xmin = 0.5,
+    xmax = 5.5,
+    fill = "transparent",
+    color = "black"
+  ) +
+  geom_rect(
+    data = rect,
+    aes(
+      ymin = rect$startY,
+      ymax = rect$endY,
+      fill = rect$clus
+    ),
+    xmin = -0.15,
+    xmax = 0.35,
+    alpha = 0.3,
+    color = "transparent",
+    fill = cols3[1:max(unique(res_mclus$Mclus))]
+  ) +
+  geom_text(
+    data = rect,
+    aes(
+      x = 0.1,
+      y = base::round((rect$endY-rect$startY)/2)+rect$startY,
+      label = rect$clus
+    ),
+    angle = 90,
+    size = 3
+  ) +
+  scale_x_discrete(
+    expand = expand_scale(
+      add=c(1.25,0.6)
+    )
+  ) +
+  scale_y_discrete(
+    expand = expand_scale(
+      add = base::c(80L,80L)
+    )
+  ) +
+  guides(
+    fill = guide_colourbar(
+      label.position = "right",
+      title.position = "left",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      ),
+      ticks=T,
+      nbin=100,
+      barheight=10,
+      label=T,
+      barwidth=0.5
+    )
+  )
+base::print(plot_heat)
+```
+
+## [8.16.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/20181206_res_mclus_heatmap_FDR25_seed0_k10."),
+      ext
+    ),
+    plot = plot_heat,
+    device = ext,
+    dpi = 300,
+    width = 4,
+    height = 8
+  )
+}
+```
+
+##--------------------##
+##----PCA_analysis----##
+##--------------------##
+
+## [8.8.] PCA analysis
+##### Note: 'factoextra::fviz_pca_ind(pca,label = "none",habillage = res_mclus$Mclus)'
+```{r}
+pca <- stats::prcomp(
+    x = resKclus %>%
+      dplyr::select(8:11)
+  )
+
+pca_sum <- factoextra::facto_summarize(
+    X = pca,
+    element = "ind",
+    axes = base::c(1,2,3,4),
+    result =  base::c("coord", "contrib", "cos2")
+  )
+
+pca_contr <- factoextra::facto_summarize(
+    X = pca,
+    element = "var",
+    axes = base::c(1,2,3,4),
+    result =  base::c("coord", "contrib", "cos2")
+  )
+
+res_pca <- cbind(resKclus,pca_sum)
+```
+
+## [8.9.] Generate additional variables
+```{r}
+res_pca <- res_pca %>%
+  dplyr::mutate(
+    phes5_flox2 = log2((2^phes5_cux2+2^phes5_fezf2)/(2^flox2_cux2+2^flox2_fezf2)),
+    cux2_fezf2 = log2((2^phes5_cux2+2^flox2_cux2)/(2^phes5_fezf2+2^flox2_fezf2)),
+    kclus = base::factor(
+      kclus,
+      levels = base::seq(1,base::nrow(resK$centers),1),
+      ordered = TRUE
+    )
+  )
+```
+
+## [8.10.] Determine contribution parameter
+```{r}
+end <- pca_contr %>%
+  remove_rownames() %>% 
+  dplyr::select(1:5) %>% 
+  gather(
+    key = "param",
+    value = "value",
+    -name
+  )
+
+ start <- end %>%
+  dplyr::mutate(
+    value = 0
+  )%>%
+  tidyr::spread(
+    key = "param",
+    value = "value"
+  )
+ 
+coord <- pca_contr %>%
+  remove_rownames() %>% 
+  dplyr::select(1:5) %>% 
+  gather(
+    key = "param",
+    value = "value",
+    -name
+  ) %>%
+  dplyr::mutate(
+    value = value*4
+  ) %>%
+  tidyr::spread(
+    key = "param",
+    value = "value"
+  ) %>% 
+  rbind(., start) %>%
+ dplyr::arrange(name,abs(Dim.1))
+```
+
+## [8.11.] Plot phes5_flox2
+```{r}
+plot_pca <- ggplot2::ggplot() +
+  geom_point(
+    data = res_pca,
+    aes(
+      x=Dim.1,
+      y=Dim.2,
+      fill = phes5_flox2
+    ),
+    alpha=0.6,
+    colour="black",
+    pch = 21,
+    stroke = 0.1
+  ) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  scale_fill_gradient2(
+    limits = base::c(-8,8),
+    low = "darkblue",
+    mid = "white",
+    high = "darkred"
+  ) +
+  geom_line(
+    data = coord %>%
+      dplyr::filter(grepl('flox2',name)),
+    aes(
+      x=Dim.1,
+      y=Dim.2,
+      group = name
+    ),
+    arrow = arrow(
+      length=unit(0.30,"cm"),
+      ends="last",
+      type = "closed",
+      angle = 15
+      ),
+    linetype = "dashed"
+  ) +
+  geom_text(
+    data = coord %>%
+      dplyr::filter(
+        grepl('flox2',name) &
+        Dim.1 != 0L
+      ),
+    aes(
+      x = Dim.1,
+      y = Dim.2,
+      label = name
+    )
+  ) +
+  geom_line(
+    data = coord %>%
+      dplyr::filter(grepl('phes5',name)),
+    aes(
+      x=Dim.1,
+      y=Dim.2,
+      group = name
+    ),
+    arrow = arrow(
+      length=unit(0.30,"cm"),
+      ends="first",
+      type = "closed",
+      angle = 15
+      ),
+    linetype = "dashed"
+  )  +
+  geom_text(
+    data = coord %>%
+      dplyr::filter(
+        grepl('phes5',name) &
+        Dim.1 != 0L
+      ),
+    aes(
+      x = Dim.1,
+      y = Dim.2,
+      label = name
+    )
+  ) +
+  guides(
+    fill = guide_colourbar(
+      label.position = "right",
+      title.position = "left",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      ),
+      ticks=T,
+      nbin=100,
+      barheight=10,
+      label=T,
+      barwidth=0.5
+    )
+  )
+  xlim(-4,4)
+base::print(plot_pca)
+```
+
+## [8.7.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181119_phes5Flox2_cux2Fezf2_tracks/20181123_pca_phes5Flox2_cux2Fezf2_FDR25_phes5_vs_flox2_v3_seed0."),
+      ext
+    ),
+    plot = plot_pca,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 4
+  )
+}
+```
+
+## [8.11.] Plot phes5_flox2
+```{r}
+plot_pca <- ggplot2::ggplot() +
+  geom_point(
+    data = res_pca,
+    aes(
+      x=Dim.1,
+      y=Dim.3,
+      fill = cux2_fezf2
+    ),
+    alpha=0.6,
+    colour="black",
+    pch = 21,
+    stroke = 0.1
+  ) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  scale_fill_gradient2(
+    limits = base::c(-8,8),
+    low = "darkblue",
+    mid = "white",
+    high = "darkred"
+  ) +
+  geom_line(
+    data = coord %>%
+      dplyr::filter(grepl('flox2',name)),
+    aes(
+      x=Dim.1,
+      y=Dim.3,
+      group = name
+    ),
+    arrow = arrow(
+      length=unit(0.30,"cm"),
+      ends="last",
+      type = "closed",
+      angle = 15
+      ),
+    linetype = "dashed"
+  ) +
+  geom_text(
+    data = coord %>%
+      dplyr::filter(
+        grepl('flox2',name) &
+        Dim.1 != 0L
+      ),
+    aes(
+      x = Dim.1,
+      y = Dim.3,
+      label = name
+    )
+  ) +
+  geom_line(
+    data = coord %>%
+      dplyr::filter(grepl('phes5',name)),
+    aes(
+      x=Dim.1,
+      y=Dim.3,
+      group = name
+    ),
+    arrow = arrow(
+      length=unit(0.30,"cm"),
+      ends="first",
+      type = "closed",
+      angle = 15
+      ),
+    linetype = "dashed"
+  )  +
+  geom_text(
+    data = coord %>%
+      dplyr::filter(
+        grepl('phes5',name) &
+        Dim.1 != 0L
+      ),
+    aes(
+      x = Dim.1,
+      y = Dim.3,
+      label = name
+    )
+  ) +
+  guides(
+    fill = guide_colourbar(
+      label.position = "right",
+      title.position = "left",
+      title.theme = element_text(
+        angle = 90,
+        hjust = 0.5
+      ),
+      ticks=T,
+      nbin=100,
+      barheight=10,
+      label=T,
+      barwidth=0.5
+    )
+  ) +
+  xlim(-4,4) +
+  ylim(-4,4)
+base::print(plot_pca)
+```
+
+## [8.7.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20181119_phes5Flox2_cux2Fezf2_tracks/20181123_pca_phes5Flox2_cux2Fezf2_FDR25_phes5_vs_flox2_v3_seed0_Dim1Dim3."),
+      ext
+    ),
+    plot = plot_pca,
+    device = ext,
+    dpi = 300,
+    width = 6,
+    height = 4
+  )
+}
+```
+
+##----------------------------##
+##----Retrieve_coordinates----##
+##----------------------------##
+
+## [7.0.] Load res
+##### Note: Previous dir: "data/20181012_phes5Flox2_cux2Fezf2Pou3f2_tracks/20181030_resKclus_FDR150.rds"
+```{r}
+resKclus <- base::readRDS(
+  file = here::here("data/20181119_phes5Flox2_cux2Fezf2_tracks/20181123_resKclus_FDR25_seed0.rds")
+)
+```
+
+## [7.1.] LiftOver coordinates to mm9
+```{r}
+mm10Tomm9.chain <- rtracklayer::import.chain(
+    con = "/Users/robertkrautz/Documents/resources/mm10ToMm9.over.chain"
+  )
+(
+  resKclus %>%
+    dplyr::select(2:4) %>%
+    dplyr::mutate(
+      chr = stringr::str_c("chr",chr)
+    ) %>% 
+    GenomicRanges::makeGRangesFromDataFrame(.) %>%
+    rtracklayer::liftOver(
+      x = .,
+      chain = mm10Tomm9.chain
+    ) %>%
+    base::as.tibble %>%
+    dplyr::rename(.,chr=seqnames) %>% 
+    dplyr::select(chr,start,end)
+)
+```
+
+## [7.1.] Helper function to write peak sequences for every cluster
+```{r}
+coordinator <- function(k, tib, outdir, genome="mm10", fdr=150L){
+  
+  if(genome=="mm9"){
+    mm10Tomm9.chain <- rtracklayer::import.chain(
+      con = "/Users/robertkrautz/Documents/resources/mm10ToMm9.over.chain"
+    )
+  }
+  
+  tmpTib <- tib %>%
+    dplyr::filter(
+      kclus == k
+    ) %>%
+    dplyr::select(2:4) %>%
+    when(
+      genome == "mm10" ~
+        dplyr::arrange(., chr,start),
+      TRUE ~ 
+        dplyr::mutate(
+            .,
+            chr = stringr::str_c("chr",chr)
+          ) %>%
+        GenomicRanges::makeGRangesFromDataFrame(.) %>%
+        rtracklayer::liftOver(
+            x = .,
+            chain = mm10Tomm9.chain
+          ) %>%
+        base::as.tibble %>%
+        dplyr::rename(.,chr=seqnames) %>%
+        dplyr::arrange(chr,start) %>% 
+        dplyr::select(chr,start,end)
+    )
+  
+  fn <- here::here(
+   base::paste0(
+      outdir,
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_resKclus_FDR",
+      fdr, "_",
+      genome, "_",
+      "kclus", k,
+      ".bed"
+    )
+  )
+  
+  write.table(
+    x = tmpTib,
+    file = fn,
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = FALSE
+  )
+  return(fn)
+}
+```
+
+## [7.2.] Apply writer() to all clusKs
+```{r}
+clusFiles <- purrr::map_chr(
+  .x = resKclus %>%
+    distinct(kclus) %>%
+    base::unlist() %>%
+    base::unname(),
+  .f = coordinator,
+  tib = resKclus,
+  outdir = "data/20181119_phes5Flox2_cux2Fezf2_tracks/",
+  genome = "mm9",
+  fdr = 25L
+)
+clusFiles
+```
+
+##--------------------------##
+##----Retrieve_sequences----##
+##--------------------------##
+
+## [6.0.] Load res
+##### Note: see '[5.19.]'
+```{r}
+resKclus <- base::readRDS(
+    file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181207_resKclus_FDR25_seed0_k9_zscores.rds")
+  )
+```
+
+## [6.1.] Retrieve peak sequences
+##### Note: Sequences derived from 'BSgenome.Mmusculus.UCSC.mm10'
+```{r}
+resSeq <- resKclus %>%
+   dplyr::mutate(
+    names = stringr::str_c("chr",chr),
+    seq = pmap(
+    base::list(
+      names,
+      start,
+      end
+    ),
+    getSeq,
+    x=Dmelanogaster
+    )
+  )
+```
+
+## [6.2.] Save peak sequences
+```{r}
+base::saveRDS(
+  object = resSeq,
+  file = here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/20181213_resSeq_FDR25_seed0_zscores.rds"),
+  compress = TRUE
+)
+```
+
+## [6.3.] Load peak sequences
+```{r}
+resSeq <- base::readRDS(
+    file = here::here("data/20181126_phes5Flox2_cux2Fezf2_motifEnrichment/20181126_resSeq_FDR25_seed0.rds")
+  )
+```
+
+## [6.4.1.] Convert resSeq into DNAStringSet
+```{r}
+resStr <- resSeq %>%
+  dplyr::select(seq) %>%
+  base::unlist() %>%
+  base::unname()%>%
+  Biostrings::DNAStringSet(.)
+```
+
+## [6.4.2.] Convert all sequences in resSeq to strings
+```{r}
+resSeq %>%
+  sample_n(20) %>%
+  dplyr::mutate(
+    seqStr = purrr::map_chr(
+      seq,
+      toString
+    )
+  )
+```
+
+## [6.5.] Helper function to write peak sequences for every cluster
+```{r}
+writer <- function(k, tib, outdir, fdr = 25L){
+  
+  tmpTib <- tib %>%
+    dplyr::filter(
+      kclus == k
+    ) %>%
+    dplyr::mutate(
+      id = stringr::str_c(">",chr,"_",start,"_",end),
+      #id = stringr::str_c(">",id),
+      seqStr = purrr::map_chr(
+        seq,
+        toString
+      )
+    ) %>%
+    dplyr::select(id,seqStr)
+  
+  fn <- here::here(
+   base::paste0(
+      outdir,
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_resSeq_FDR",
+      fdr, "_",
+      "kclus", k,
+      ".fa"
+    )
+  )
+  
+  write.table(
+    x = tmpTib,
+    file = fn,
+    quote = FALSE,
+    sep = "\n",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = FALSE
+  )
+  return(fn)
+}
+```
+
+## [6.6.] Apply writer() to all clusKs
+```{r}
+clusFiles <- purrr::map_chr(
+  .x = resKclus %>%
+    distinct(kclus) %>%
+    base::unlist() %>%
+    base::unname(),
+  .f = writer,
+  tib = resSeq,
+  outdir = "data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/",
+  fdr = 25L
+)
+```
+
+##<<unnecessary_end>>

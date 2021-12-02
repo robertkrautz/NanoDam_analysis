@@ -1,0 +1,3277 @@
+---
+title: "20190117_workflow_AH7&AG7combined"
+author: "R_Krautz"
+date: "17/01/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [-1.0.] Install or change to correct Seurat version
+#### previous "Seurat_3.0.2.tar.gz","Seurat_2.3.4.tar.gz"
+```{r}
+base::unloadNamespace("Seurat")
+utils::remove.packages("Seurat")
+
+depend = base::c(
+    "lars", "ica", "tsne",
+    "fpc", "pbapply", "RANN",
+    "dtw", "SDMTools", "metap",
+    "lmtest", "fitdistrplus", "doSNOW",
+    "hdf5r", "RcppProgress","SDMTools"
+  )
+utils::install.packages(depend)
+devtools::install_github(
+    repo  = "https://github.com/cran/SDMTools"
+  )
+utils::install.packages(
+    pkgs = base::paste0(
+        here::here("src/"),
+        "Seurat_2.3.4.tar.gz"
+      ),
+    repos = NULL,
+    type = "source"
+  )
+
+utils::packageVersion('Seurat')
+```
+
+## [0.0.] Load necessary libraries
+```{r message=FALSE}
+base::library(here)
+base::library(tidyverse)
+base::library(magrittr)
+base::library(gtable)
+base::library(grid)
+base::library(ggrastr)
+
+base::library(hdf5r)
+base::library(SDMTools)
+base::library(tsne)
+base::library(Seurat)
+base::library(Matrix)
+
+base::options(max.print = 100L)
+
+utils::packageVersion('Seurat')
+```
+
+##<<necessary?_start>>
+
+## [0.1.] Load conda environment, python & check for 'umap-learn' module
+#### on console: 'conda env list', 'conda list -n bioinf_py37'
+```{r}
+reticulate::conda_list(
+    conda = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/condabin/conda"
+  )
+reticulate::use_condaenv(
+    condaenv = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/envs/bioinf_py37/",
+    conda = "/binf-isilon/alab/people/rkrautz/bin/anaconda3/condabin/conda",
+    required = TRUE
+  )
+reticulate::py_config()
+
+pks <- reticulate::py_config() %>%
+  .[["numpy"]] %>%
+  .[["path"]] %>%
+  base::dirname()
+
+pk = "umap" #"pyprojroot"
+base::list.dirs(path = pks) %>%
+  stringr::str_subset(pk)
+```
+
+## [0.2.] Save & load environment
+#### previous (1.) '20190415.RData' (2.) '20190614.RData' (3.) '20190614_20190415repro.RData'
+```{r eval=FALSE}
+base::save.image(
+  base::paste0(
+      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+      "20211129_rerun.RData"
+    ),
+    compress = TRUE
+  )
+```
+
+```{r}
+base::load(
+  base::paste0(
+      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+      "20211129_rerun.RData"
+    )
+  )
+```
+
+##<<necessary?_end>>
+
+##---------------------##
+##----Prerequisites----##
+##---------------------##
+
+## [0.1.] Color palette
+```{r}
+pal <- base::c(
+    "#3255A4", "#A4DBE8", "#8C8279",
+    "#EA7600", "#F6BE00", "#28B463",
+    "#AF7AC5", "#0E6655", "#0097A9",
+    "#E03C31", "#B5BD00", "#500778",
+    "#93272C", "#C6B0BC", "#8F993E",
+    "#17202A", "#FF6F00", "#555025"
+  )
+```
+
+## [0.2.] Load FlyTFs
+#### see 'https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html'
+```{r}
+tfs <- readr::read_delim(
+      file = base::paste0(
+          here::here("resources/"),
+          "FlyTFv1.all_candidates.csv"
+        ),
+      delim = "\t",
+      col_names = TRUE,
+      col_types = "cccccc",
+      quote = ""
+    ) %>%
+  dplyr::filter(
+      !base::is.na(verdict_TF)
+    ) %>%
+  dplyr::select(symbol) %>%
+  dplyr::pull(symbol)
+```
+
+## [0.3.] Helper function to read out data from Seurat inps object
+```{r}
+reader <- function(object,genes,impute){
+    clus.id <- tibble::tibble(
+        cell = base::names(object@ident),  
+        cluster = inps@ident
+      )
+    
+    out <- Seurat::FetchData(
+          object = object,
+          vars.all = genes,
+          use.imputed = impute
+        ) %>%
+      tibble::as_tibble(
+          rownames = "cell"
+        ) %>%
+      dplyr::filter(
+          cell %in% object@cell.names
+        ) %>% 
+      base::merge(
+          x = .,
+          y = clus.id,
+          by = "cell"
+        ) %>% 
+      tidyr::gather(
+          key = "gene",
+          value = "exp",
+          -cell,-cluster
+        ) %>%
+      dplyr::mutate(
+          gene = base::factor(
+            x = gene,
+            levels = genes,
+            ordered = TRUE
+          )
+      )
+    return(out)
+  }
+```
+
+## [0.4.] Helper function to visualize the expression distribution of the selected genes in their clusters
+#### Note: address strip labels: g1$grobs[[62]]$grobs[[1]]$children[[2]]$children[[1]]$label
+#### Note: addess strip colors: g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill
+```{r}
+plotter <- function(df,pal){
+    plot <- ggplot2::ggplot(
+          data = df,
+          mapping = aes(
+            x = gene,
+            y = exp
+          )
+        ) +
+      coord_flip() +
+      facet_wrap(
+          cluster~.,
+          nrow = 1
+        ) +
+      geom_boxplot(
+          outlier.shape = NA,
+          outlier.size = NA
+        ) +
+      theme_bw() +
+      theme(
+          legend.position = "none",
+          axis.title = element_blank()
+        )
+    
+    g1 <- ggplot2::ggplotGrob(plot)
+    
+    strips <- g1$layout %>%
+      tibble::as_tibble() %>%
+      dplyr::mutate(
+          feature = base::rownames(g1$layout),
+          rowname = dplyr::row_number()
+        ) %>%
+      dplyr::filter(
+          stringr::str_detect(name,"strip-t")
+        ) %>%
+      dplyr::pull(rowname)
+    
+    repl <- tibble::tibble(
+        strip = strips,
+        cols = pal[1:length(strips)]
+      ) 
+    
+    for(i in strips){
+      #cat(i,'\t',g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill,'\n')
+      g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill <- repl[repl$strip==i,]$cols
+      #cat(i,'\t',g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill,'\n')
+    }
+    return(g1)
+  }
+```
+
+## [0.5.] preper() helper function
+```{r}
+preper <- function(container, geneChos, dim.1 = 1L, dim.2 = 2L){
+    
+    cells.use <- base::colnames(x = container@data)
+    dim.code <- Seurat::GetDimReduction(
+        object = container,
+        reduction.type = "tsne",
+        slot = "key"
+      )
+    dim.codes <- base::paste0(dim.code, base::c(dim.1,dim.2))
+    
+    data.plot <- Seurat::GetCellEmbeddings(
+          object = container,
+          reduction.type = "tsne",
+          dims.use = base::c(dim.1, dim.2),
+          cells.use = cells.use
+        ) %>%
+      base::as.data.frame() %>%
+      tibble::rownames_to_column(
+          .data = .,
+          var = "cell"
+        )
+    
+    high.plot <- Seurat::FetchData(
+          object = container,
+          vars.all = geneChos,
+          cells.use = cells.use,
+          use.imputed = FALSE
+        ) %>%
+      base::as.data.frame() %>% 
+      tibble::rownames_to_column(
+          .,
+          var = "cell"
+        ) %>%
+      dplyr::rename(.,gene=geneChos)
+    
+    comb.plot <- base::merge(
+          x = data.plot,
+          y = high.plot,
+          by = "cell"
+        ) %>%
+      dplyr::arrange(gene)
+    
+    return(comb.plot)
+  }
+```
+
+## [0.6.] plotOnTsne() helper function
+```{r}
+plotOnTsne <- function(comb, title, ran=NULL, leg="right", coef = 0.25){
+    
+    xRange <- comb %$% base::range(tSNE_1)
+    yRange <- comb %$% base::range(tSNE_2)
+    xPos = xRange[1] +  (0.1*(base::abs(xRange[1])+xRange[2]))
+    yPos = yRange[2] - (0.05*(base::abs(yRange[1])+yRange[2]))
+    
+    ##Gene_expression_range
+    if(base::is.null(ran)){
+        rangE <- comb %$% base::range(gene)
+      } else {
+        rangE = ran
+      }
+    
+    ##Color_palette
+    cols <- base::c(
+        grDevices::colorRampPalette(
+            base::c("#e7f0fa", "#c9e2f6", "#95cbee", "#0099dc", "#4ab04a", "#ffd73e")
+          )(coef*100),
+        grDevices::colorRampPalette(
+          base::c("#eec73a", "#e29421", "#e29421", "#f05336","#ce472e"),
+          bias=2
+        )((1-coef)*100)
+      )
+    
+    ##Plotting
+    cur_plot <- ggplot2::ggplot(
+          data = comb,
+          mapping = aes(
+              x = tSNE_1,
+              y = tSNE_2,
+              colour = gene
+            )
+        ) +
+      ggrastr::geom_point_rast(
+          #size = 1,#0.25
+        ) +
+      scale_colour_gradientn(
+          colours = cols,
+          limits = base::c(rangE[1],rangE[2])
+        ) +
+      annotate(
+          geom = "text",
+          x = xPos,
+          y = yPos,
+          label = title,
+          colour = "black",
+          size = 4,
+          fontface = 4
+        ) +
+      theme_bw() +
+      theme(
+          # axis.title = element_blank(),
+          legend.position = leg,
+          # axis.text = element_text(
+          #   size = 6
+          # ),
+          # plot.margin = unit(c(0,0.75,0,0.75), "pt"),
+          aspect.ratio = 1
+        ) +
+      guides(
+        colour = guide_colourbar(
+          label.position = "right",
+          title = NULL,
+          title.position = "left",
+          title.theme = element_text(
+              angle = 90,
+              hjust = 0.5
+            ),
+          ticks=T,
+          nbin=100,
+          barheight=10,
+          label=T,
+          barwidth=0.5
+        )
+      )
+    
+    return(cur_plot)
+  }
+```
+
+##-------------------------##
+##----Combine_AG7_&_AH7----##
+##-------------------------##
+
+## [1.0.] Read in AH7 files
+#### evaluate with 'utils::str(ah7.data)', 'ah7.data[1:10,1400:1405] %>% base::as.matrix'
+#### previous "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod"
+```{r}
+dataset = "AH7"
+
+ah7.dir <- base::paste0(
+    'data/20190110_CellRanger_scRNASeq_NanoDam/',
+    dataset,
+    '_Ensembl_BDGP6_genes.mod'
+  )
+ah7.data <- Seurat::Read10X(
+    data.dir = here::here(ah7.dir)
+  )
+```
+
+## [1.1.] Read in AG7 files
+#### evaluate with 'ag7.data[1:10,1:5] %>% as.matrix'
+#### previous "/outs/filtered_gene_bc_matrices/Ensembl_BDGP6_genes.mod"
+```{r}
+dataset = "AG7"
+
+ag7.dir <- paste0(
+    'data/20190110_CellRanger_scRNASeq_NanoDam/',
+    dataset,
+    '_Ensembl_BDGP6_genes.mod'
+  )
+ag7.data <- Seurat::Read10X(
+    data.dir = here(ag7.dir)
+  )
+```
+
+## [1.2.] Run through worflow for ah7 & ag7
+```{r}
+ah7 <- Seurat::CreateSeuratObject(raw.data = ah7.data)
+ah7 <- Seurat::NormalizeData(object = ah7)
+ah7 <- Seurat::ScaleData(object = ah7)
+ah7 <- Seurat::FindVariableGenes(object = ah7,do.plot = FALSE)
+ah7@meta.data[, "protocol"] <- "10x_AH7"
+```
+
+```{r}
+ag7 <- Seurat::CreateSeuratObject(raw.data = ag7.data)
+ag7 <- Seurat::NormalizeData(object = ag7)
+ag7 <- Seurat::ScaleData(object = ag7)
+ag7 <- Seurat::FindVariableGenes(object = ag7,do.plot = FALSE)
+ag7@meta.data[, "protocol"] <- "10x_AG7"
+```
+
+## [1.3.] Create union of the top 2k variable genes
+```{r}
+hvg.ag7 <- ag7@hvg.info %>%
+  tibble::rownames_to_column(
+      .,
+      var = "gene"
+    ) %>% 
+  dplyr::top_n(2000) %>%
+  dplyr::pull(gene)
+  
+hvg.ah7 <- ah7@hvg.info %>%
+  tibble::rownames_to_column(
+      .,
+      var = "gene"
+    ) %>% 
+  dplyr::top_n(2000) %>%
+  dplyr::pull(gene)
+
+hvg.union <- dplyr::union(hvg.ah7,hvg.ag7)
+```
+
+## [1.4.] Canonical correlation analysis & merge
+#### purpose: identify common sources of gene expression variation
+#### methodology: calculate maximally correlated subspaces via CCA
+```{r}
+inps <- Seurat::RunCCA(
+    object = ag7,
+    object2 = ah7,
+    add.cell.id1 = "RFP_",
+    add.cell.id2 = "GFPRFP_",
+    scale.data = TRUE,
+    rescale.groups = FALSE,
+    num.cc = 20L,
+    genes.use = hvg.union
+  )
+```
+
+## [1.5.] Compare both datasets
+```{r}
+plot_1 <- Seurat::DimPlot(
+    object = inps,
+    reduction.use = "cca",
+    group.by = "protocol",
+    pt.size = 0.5
+  )
+plot_2 <- Seurat::VlnPlot(
+    object = inps,
+    features.plot = base::c("CC1","CC2"),
+    group.by = "protocol",
+    do.return = TRUE
+  )
+cowplot::plot_grid(plot_1,plot_2)
+```
+
+## [1.6.] Compare gene expression based on CCA vs. PCA
+```{r}
+inps <- Seurat::CalcVarExpRatio(
+    object = inps,
+    reduction.type = "pca",
+    grouping.var = "protocol",
+    dims.use = 1:10
+  )
+```
+
+## [1.7.] Discard cells
+#### variance explained by CCA < 2-fold variance explained by PCA
+```{r}
+inps <- Seurat::SubsetData(
+    object = inps,
+    subset.name = "var.ratio.pca",
+    accept.low = 0.5
+  )
+```
+
+## [1.8.] Align subspaces via DTW
+```{r}
+inps <- Seurat::AlignSubspace(
+    object = inps,
+    reduction.type = "cca",
+    grouping.var = "protocol",
+    num.possible.genes = 2000,
+    num.genes = 30,
+    show.plots = TRUE,
+    dims.align = 1:10
+  )
+```
+
+## [1.9.] Visualize the aligned CCA
+```{r}
+plot_1 <- Seurat::VlnPlot(
+    object = inps,
+    features.plot = "ACC1",
+    group.by = "protocol",
+    do.return = TRUE
+  )
+plot_2 <- Seurat::VlnPlot(
+    object = inps,
+    features.plot = "ACC2",
+    group.by = "protocol",
+    do.return = TRUE
+  )
+cowplot::plot_grid(plot_1,plot_2)
+```
+
+## [1.10.] Evaluation
+```{r}
+Seurat::GetDimReduction(
+    object = inps,
+    reduction.type = "cca.aligned",
+    slot = "cell.embeddings"
+  )
+```
+
+## [1.11.] Read out CCA gene-to-cell-data
+#### 'inps@raw.data@Dimnames[[1]]' can replace 'base::rownames(inps@data)'
+```{r}
+comb.cca <- Seurat::FetchData(
+      object = inps,
+      vars.all = base::rownames(inps@data),
+      cells.use = inps@cell.names,
+      use.imputed = FALSE,
+      use.scaled = FALSE,
+      use.raw = FALSE
+    ) %>%
+  base::t()
+
+comb.data <- Seurat::GetAssayData(
+      object = inps,
+      assay.type = "RNA", 
+      slot = "data"
+    ) %>%
+  base::as.matrix() %>% 
+  base::t()
+```
+
+## [1.12.] Evaluation
+```{r}
+comb.cca[1:5,1:5]
+base::range(comb.cca)
+
+comb.data[1:10,1:10]
+base::range(comb.data)
+```
+
+##-----------------##
+##----tSNE_plot----##
+##-----------------##
+
+## [2.0.] Integrated analysis
+```{r}
+inps <- Seurat::RunTSNE(
+    object = inps,
+    reduction.use = "cca.aligned",
+    dims.use = 1:10,
+    do.fast = TRUE
+  )
+inps <- Seurat::FindClusters(
+    object = inps,
+    reduction.type = "cca.aligned",
+    dims.use = 1:10,
+    save.SNN = TRUE
+  )
+```
+
+#### code chunk added 20211110
+```{r}
+reticulate:::ensure_python_initialized()
+reticulate:::is_python_initialized()
+reticulate::py_module_available(module ="umap")
+
+inps_ <- Seurat::RunUMAP(
+    object = inps,
+    reduction.use = "cca.aligned",
+    dims.use = 1:10,
+    do.fast = TRUE
+  )
+```
+
+```{r}
+seed.tsne = 1L
+starts = 100L
+iter = 10L
+seed.clus = 0L
+
+inps <- Seurat::RunTSNE(
+    object = inps,
+    reduction.use = "cca.aligned",
+    dims.use = 1:10,
+    tsne.method = "Rtsne",
+    reduction.name = "tsne",
+    seed.use = seed.tsne,
+    dim.embed = 2L,
+    do.fast = TRUE
+  )
+inps <- Seurat::FindClusters(
+    object = inps,
+    reduction.type = "cca.aligned",
+    dims.use = 1:10,
+    k.param = 30L,
+    plot.SNN = TRUE,
+    resolution = 0.8,
+    n.start = starts,
+    n.iter = iter,
+    random.seed = seed.clus,
+    save.SNN = TRUE
+  )
+```
+
+## [2.1.] Visualize clustering
+```{r}
+plot_1 <- Seurat::TSNEPlot(
+    object = inps,
+    group.by = "protocol",
+    do.return = TRUE,
+    pt.size = 0.5
+  )
+plot_2 <- Seurat::TSNEPlot(
+    object = inps,
+    do.return = TRUE,
+    pt.size = 0.5,
+    do.label = TRUE
+  )
+cowplot::plot_grid(plot_1,plot_2)
+```
+
+## [2.2.] Read out all tSNE data
+```{r}
+dim.1 = 1L
+dim.2 = 2L
+dim.code <- Seurat::GetDimReduction(
+    object = inps,
+    reduction.type = "tsne",
+    slot = "key"
+  )
+dim.codes <- base::paste0(dim.code, base::c(dim.1,dim.2))
+
+clus.cells <- tibble::tibble(
+    cell = names(inps@ident),
+    clus = inps@ident
+  )
+
+cells.tsne <- Seurat::GetDimReduction(
+      object = inps,
+      reduction.type = "tsne",
+      slot = "cell.embeddings"
+    ) %>%
+  dplyr::as_tibble(
+      rownames = "cell"
+    ) %>%
+  dplyr::select(
+      "cell", tidyselect::all_of(dim.codes)
+    ) %>%
+  base::merge(
+      x = .,
+      y = clus.cells,
+      by = "cell"
+    )
+```
+
+#### Read out all UMAP data
+```{r}
+dim.1 = 1L
+dim.2 = 2L
+dim.code <- Seurat::GetDimReduction(
+    object = inps_,
+    reduction.type = "umap",
+    slot = "key"
+  )
+dim.codes <- base::paste0(dim.code, base::c(dim.1,dim.2))
+
+clus.cells <- tibble::tibble(
+    cell = base::names(inps_@ident),
+    clus = inps_@ident
+  )
+
+cells.umap <- Seurat::GetDimReduction(
+      object = inps_,
+      reduction.type = "umap",
+      slot = "cell.embeddings"
+    ) %>%
+  dplyr::as_tibble(
+      rownames = "cell"
+    ) %>%
+  dplyr::select(
+      "cell", tidyselect::all_of(dim.codes)
+    ) %>%
+  base::merge(
+      x = .,
+      y = clus.cells,
+      by = "cell"
+    )
+```
+
+## [2.3.] Add sample/protocol information
+#### evaluate with "cells.tsne %>% dplyr::group_by(protocol) %>% dplyr::summarise(n = dplyr::n())"
+```{r}
+cells.prot <- inps@meta.data %>%
+  tibble::as_tibble(
+      rownames = "cell"
+    ) %>%
+  dplyr::select(cell,protocol)
+
+cells.tsne <- dplyr::left_join(
+    x = cells.tsne,
+    y = cells.prot,
+    by = "cell"
+  )
+base::remove(cells.prot)
+```
+
+##<<necessary?_start>>
+
+```{r}
+clus.order <- base::c(3,4,7,2,0,1,9,11,8,10,5,6)
+
+cells.tsne %>%
+  dplyr::group_by(protocol,clus) %>%
+  dplyr::summarise(
+      n = dplyr::n()
+    ) %>%
+  dplyr::group_by(protocol) %>%
+  dplyr::mutate(
+      ncells_prot = base::sum(n),
+      rel = n/ncells_prot,
+      clus = base::factor(
+          x = clus,
+          levels = clus.order,
+          ordered = TRUE
+        )
+    ) %>%
+  dplyr::arrange(
+      clus,protocol
+    ) %>%
+  ggplot2::ggplot(
+      data = .,
+      mapping = aes(
+        x = rel,
+        y = protocol,
+        fill = protocol
+      )
+    ) +
+  geom_bar(
+      stat = "identity",
+      colour = "black"
+    ) +
+  geom_text(
+      aes(
+          x = rel,
+          label = n
+        ),
+      nudge_x = -0.025,
+      size = 3,
+      color = "white",
+      fontface = "bold"
+    ) +
+  facet_wrap(
+      facets = clus ~ .,
+      ncol = 1,
+      strip.position = "right"
+    )  +
+  scale_fill_manual(
+      values = base::c("#58B4E5", "#E7A023")
+    ) +
+  theme_bw() +
+  theme(
+    panel.spacing = grid::unit(0.1, "line"),
+    aspect.ratio = 1/4
+  )
+```
+
+##<<necessary?_end>>
+
+## [2.4.] Visualize cell contributions to clusters
+```{r}
+clus.order <- base::c(3,4,7,2,0,1,9,11,8,10,5,6)
+
+cells.tsne %>%
+  dplyr::mutate(
+      clus = base::factor(
+        x = clus,
+        levels = base::rev(clus.order),
+        ordered = TRUE
+      )
+    ) %>% 
+  dplyr::group_by(clus) %>%
+  dplyr::summarise(n = dplyr::n()) %>% 
+  ggplot2::ggplot(
+        data = .,
+        mapping = ggplot2::aes(
+          x = n,
+          y = clus,
+          fill = clus
+        )
+      ) +
+    geom_bar(
+        stat = 'identity',
+        color = "black"
+      ) +
+    geom_text(
+      aes(
+          x = n,
+          label = n
+        ),
+      nudge_x = -75,
+      color = "white",
+      fontface = "bold"
+      ) +
+    scale_x_continuous(
+        name = "number of cells"
+      ) +
+    scale_fill_manual(
+        limits = base::factor(base::rev(clus.order)),
+        breaks = base::factor(base::rev(clus.order)),
+        values = base::rev(pal[clus.order+1])
+      ) +
+    theme_bw() +
+    theme(
+        aspect.ratio = 2,
+        legend.position = "none",
+        axis.title.y = element_blank()
+      )
+```
+
+## [2.5.] Save contributions
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_clusterContr",
+          "_AG7AH7combined",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 3,
+      height = 5
+    )
+  }
+```
+
+## [2.6.] Prepare tSNE plotting
+```{r}
+cluster <- cells.tsne %>%  #cells.umap
+  dplyr::distinct(clus) %>%
+  dplyr::arrange(clus) %>% 
+  dplyr::mutate(
+      clus = base::as.integer(clus)-1L
+    ) %>% 
+  dplyr::pull(clus) %>%
+  base::as.factor()
+
+labels <- cells.tsne %>% #cells.umap
+  dplyr::group_by(clus) %>%
+  dplyr::summarise(
+      x = base::mean(tSNE_1), #UMAP1
+      y = base::mean(tSNE_2) #UMAP2
+    )
+
+base::set.seed(1)
+cells.tsne <- cells.tsne %>%
+  dplyr::slice_sample(
+      n = base::nrow(cells.tsne),
+      replace = FALSE
+    )
+```
+
+## [2.7.] Customized tSNE plot
+#### change dataset between "cells.tsne", "cells.umap"
+#### change cell colour between "clus", "protocol"
+```{r}
+pal.use <- pal[base::seq(0,base::length(cluster))]
+
+ggplot2::ggplot(
+      data = cells.tsne, #cells.umap,
+      mapping = aes(
+        x = cells.tsne[,dim.codes[1]], ##cells.umap
+        y = cells.tsne[,dim.codes[2]], ##cells.umap
+        colour = clus #protocol
+      )
+    ) +
+  geom_point(
+      # size = 1,
+      # alpha = 0.3
+    ) +
+  # geom_density_2d(
+  #     binwidth = 0.00005
+  #   ) +
+  # scale_colour_manual(
+  #     values = base::c("#58B4E5", "#E7A023")
+  #   ) +
+  scale_colour_manual(
+     limits = cluster,
+     breaks = cluster,
+     values = pal.use
+    ) +
+  geom_label(
+      data = labels,
+      mapping = aes(
+          x = x,
+          y = y,
+          label = clus
+        ),
+      colour = "black",
+      fill = "white",
+      size = 4,
+      fontface = "bold.italic"
+    ) +
+  theme_bw() +
+  theme(
+      aspect.ratio = 1,
+      legend.position = "none"
+    ) +
+  labs(
+      x = dim.codes[1],
+      y = dim.codes[2]
+    )
+```
+
+## [2.8.] Save plot
+#### previous "20190123_expressionTSNE_AG7AH7combined"
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_AG7AH7combined",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 4,
+      height = 4
+    )
+  }
+```
+
+## [2.9.] First approximation of visualizing expression patterns
+```{r eval=FALSE,fig.height=5,fig.width=5}
+geneset <- base::c(
+    "dpn", "mira", "ase",
+    "pros", "erm", "btd", "lola",
+    "hth", "exd", "tll",
+    "D", "ey", "grh",
+    "repo", "Cyp4g15", "moody",
+    "nSyb", "elav", "Fas2"
+  )
+
+Seurat::FeaturePlot(
+    object = inps,
+    features.plot = geneset,
+    min.cutoff = "q9",
+    cols.use = base::c("grey80", "red"),
+    pt.size = 0.5,
+    no.axes = TRUE
+  )
+```
+
+## [2.10.] Save & load data
+```{r}
+base::saveRDS(
+    object = inps,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_inps",
+        "_combinedDataset_AH7AG7",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+inps <- base::readRDS(
+  file = base::list.files(
+        path = here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("_inps_combinedDataset_AH7AG7")
+  )
+```
+
+## [2.10.] Read out markers for all clusters
+#### default test used is "wilcoxon" (previous "tobit")
+```{r}
+clusSel <- base::c(0:4,7:11)
+
+clusStats <- purrr::map(
+    .x = clusSel,
+    .f = function(clusCur){
+      
+      clusSub <- purrr::discard(
+          .x = clusSel,
+          .p = ~ .x == clusCur
+        )
+      clusRes <- stringr::str_c(
+          clusSub, collapse="_"
+        )
+    
+      return(
+        Seurat::FindMarkers(
+              random.seed = 1L,
+              object = inps,
+              ident.1 = clusCur,
+              ident.2 = clusSub,
+              test.use = "wilcox",
+              min.pct = 0.1,
+              logfc.threshold = 0.25
+            ) %>%
+          tibble::as_tibble(
+              rownames = "gene"
+            ) %>%
+          dplyr::mutate(
+              clus = clusCur,
+              resClus = clusRes
+            )
+        )
+      }
+    ) %>%
+  dplyr::bind_rows()
+```
+
+## [2.11.] Evaluate
+```{r}
+clusStats %>%
+  dplyr::group_by(clus) %>%
+  dplyr::summarise(sum = dplyr::n())
+
+clusStats %>%
+  dplyr::filter(gene == "hbn")
+
+Seurat::FindMarkers(
+      random.seed = 1L,
+      object = inps,
+      ident.1 = 4,
+      ident.2 = 7,
+      test.use = "wilcox",
+      min.pct = 0.1,
+      logfc.threshold = 0.25
+    ) %>%
+  tibbble::as_tibble(
+      rownames = "gene"
+    ) %>% 
+  dplyr::arrange(dplyr::desc(avg_logFC))
+
+##<<necessary?_start>>
+
+clusTobit %>%
+  dplyr::filter(
+      avg_logFC<=-1 | avg_logFC>=1
+    )
+
+clusTobit %>%
+  dplyr::filter(p_val_adj<0.05)
+
+##<<necessary?_end>>
+
+clusStats %>%
+  dplyr::filter(p_val_adj<0.05) %>%
+  dplyr::arrange(clus,dplyr::desc(avg_logFC))
+
+clusStats %>%
+  dplyr::arrange(clus,p_val_adj,avg_logFC) %>%
+  dplyr::filter(avg_logFC>1L | avg_logFC< (-1L)) %>% 
+  dplyr::filter(p_val_adj < 0.05) %>%
+  dplyr::mutate(diffExp = purrr::map_lgl(avg_logFC, ~.x< 0L)) %>%
+  dplyr::group_by(clus,diffExp) %>%
+  dplyr::summarise(
+      sum = dplyr::n(),
+      .groups = "drop"
+    )
+
+clusStats %>%
+  dplyr::arrange(clus,p_val_adj,avg_logFC) %>%
+  #dplyr::filter(avg_logFC>1L | avg_logFC< (-1L)) %>% 
+  dplyr::filter(p_val_adj < 0.05) %>%
+  dplyr::mutate(diffExp = purrr::map_lgl(avg_logFC, ~.x< 0L)) %>%
+  dplyr::group_by(clus,diffExp) %>%
+  dplyr::summarise(
+      sum = dplyr::n(),
+      .groups = "drop"
+    )
+```
+
+## [2.12.] Save, load & write clusStats
+```{r}
+base::saveRDS(
+  object = clusStats,
+  file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clusStats_excl56",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+##<<necessary?_start>>
+
+```{r}
+base::saveRDS(
+  object = clusTobit,
+  file = base::paste0(
+    here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+      base::format(base::Sys.time(), "%Y%m%d"),
+      "_clusTobit_excl56",
+      ".rds"
+    ),
+    compress = TRUE
+  )
+```
+
+##<<necessary?_end>>
+
+```{r}
+clusStats <- base::readRDS(
+    file = base::list.files(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("_clusStats_excl56.rds")
+  )
+```
+
+```{r}
+utils::write.table(
+    x = clusStats,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clusStats_excl56",
+        ".tsv"
+      ),
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE,
+    quote = FALSE
+  )
+```
+
+##<<necessary?_start>>
+
+## [2.15.] Evaluate
+#### added: 2019-11-08
+```{r}
+gene_overview <- base::readRDS(
+  file = base::list.files(
+        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("rds")
+  )
+
+gene_mis <- gene_overview %>%
+  dplyr::filter(
+      postTF_FBgn == 0L &
+      postTF_sym == 1L &
+      postTF_com == 1L
+    ) %>%
+  dplyr::pull(genes)
+
+clusTF %>%
+  dplyr::filter(
+      gene %in% gene_mis &
+      avg_logFC > 0
+      #clus %in% base::c(3)
+    ) %>%
+  #dplyr::distinct(gene, .keep_all=TRUE)
+  utils::write.table(
+    x = .,
+    file = base::paste0(
+        here::here("results/20181205_NanoDam_DichaeteOgre_GrhEyD/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_postTF",
+        "_differences",
+        "_expression",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+##<<necessary?_end>>
+
+##---------------------------------##
+##----Identify_sign_NanoDam_TFs----##
+##---------------------------------##
+
+## [3.0.] Read in 'mergeTF'
+#### see '[2.8.1.]' in '20181211_workflow_peakAnno.Rmd'
+##<<necessary?_start>>
+#### added: 2019-11-08
+```{r}
+mergeTF <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('postAnno')
+  )
+```
+##<<necessary?_end>>
+
+#### previous: "20191108_[...]", "20200309_[...]", "20211129_[...]"
+```{r}
+mergeTF <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset('mergeTF') %>%
+    stringr::str_subset('20211129')
+  )
+```
+
+## [3.1.] Test overlap 1
+#### Read out TFs of NanoDam k-means clusters
+```{r}
+clusCur = 1L
+excl <- base::c("Lmx1a", "Mondo", "FoxK")
+
+clus_nd <- mergeTF %>%
+  dplyr::filter(kclus == clusCur) %>%
+  dplyr::filter(!(external_gene_name %in% excl)) %>% 
+  dplyr::distinct(external_gene_name) %>%
+  dplyr::pull(external_gene_name)
+```
+
+## [3.2.] Test overlap 2
+#### Read out scRNAseq values of TFs from NanoDam cluster
+```{r}
+clusStats_nd <- clusStats %>%
+  dplyr::filter(gene %in% clus_nd) %>%
+  dplyr::rename(.,cluster = "clus")
+```
+
+## [3.3.] Apply reader() & plotter() to clusStats_nd
+#### see [10.0.] and [10.1.] for reader() and plotter()
+```{r}
+clus_sc <- .GlobalEnv$reader(
+    object = inps,
+    genes = clus_nd,
+    impute = FALSE
+  )
+g1 <- .GlobalEnv$plotter(clus_sc, pal)
+grid::grid.newpage()
+grid::grid.draw(g1)
+```
+
+## [3.4.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+    filename = base::paste0(
+      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxPlot",
+          "_AG7AH7combined",
+          "_sigDE",
+          "_TaDaCluster", clusCur,
+          "_difScale",
+          ".", ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 8,
+      height = 4
+    )
+  }
+```
+
+## [3.5.] Calculate boxplot statistics
+```{r}
+clus_bx <- clus_sc %>%
+  dplyr::group_by(cluster,gene) %>%
+  dplyr::summarise(
+      lower = stats::quantile(exp,0.25),
+      median = stats::median(exp),
+      upper = stats::quantile(exp,0.75),
+      iqr = stats::IQR(exp),
+      avg = mean(exp),
+      .groups = "drop"
+    ) %>%
+  dplyr::mutate(
+    ymin_min = purrr::pmap_dbl(
+      .l = list(
+          cluster,gene,lower
+        ),
+      .f = function(c,g,l){
+        clus_sc %>%
+          dplyr::filter(
+              cluster == c &
+              gene == g &
+              exp >= l
+            ) %>%
+          dplyr::summarise(
+              min = base::min(exp),
+              .groups = "drop"
+            ) %>%
+          dplyr::pull(min)
+        }
+      ),
+    ymax_max = purrr::pmap_dbl(
+      .l = list(
+          cluster,gene,upper
+        ),
+      .f  = function(c,g,u){
+        clus_sc %>%
+          dplyr::filter(
+              cluster == c &
+              gene == g &
+              exp <= u
+            ) %>%
+          dplyr::summarise(
+              max = base::max(exp),
+              .groups = "drop"
+            ) %>%
+          dplyr::pull(max)
+        }
+      ),
+    ymin = ymin_min - (1.5*iqr),
+    ymax = ymax_max + (1.5*iqr),
+    ymin = dplyr::case_when(
+        ymin < 0 ~ 0,
+        TRUE ~ ymin
+      ),
+    ymax = dplyr::case_when(
+        ymax < 0 ~ 0,
+        TRUE ~ ymax
+      )
+    ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+      gene = base::as.character(gene),
+      cluster = base::as.integer(
+          base::as.character(cluster)
+        )
+    )
+```
+
+## [3.6.] Test overlap 3
+#### Combine Seurat stats with boxplot statistics
+#### 'mutate_each(funs(replace(., which(is.na(.)), 1)))'
+```{r}
+sig_level = 0.05
+order <- base::c(3,4,7,2,8,10,9,11,0,1,5,6)
+
+clus_comb <- dplyr::left_join(
+      x = clus_bx,
+      y = dplyr::rename(clusStats,cluster = "clus"),
+      by = base::c("gene", "cluster")  
+    ) %>%
+  dplyr::mutate(
+    p_val_adj = tidyr::replace_na(p_val_adj,1L),
+    p_val = tidyr::replace_na(p_val,1L),
+    sign = dplyr::case_when(
+        p_val_adj <= sig_level ~ TRUE,
+        p_val_adj > sig_level ~ FALSE
+      ),
+    cluster = base::factor(
+        x = cluster,
+        levels = order,
+        ordered = TRUE
+      )
+    )
+
+genes <- clus_comb %>%
+  dplyr::filter(
+      cluster == 3 &
+      sign == TRUE &
+      avg_logFC > 0
+    ) %>% 
+  dplyr::arrange(upper) %>%
+  dplyr::pull(gene)
+
+clus_plot <- clus_comb %>%
+  dplyr::filter(
+      gene %in% genes
+    ) %>% 
+  dplyr::mutate(
+      gene = factor(
+        gene,
+        levels = genes,
+        ordered = TRUE
+      )
+    ) %>%
+  dplyr::arrange(cluster,gene)
+```
+
+## [3.7.] Evaluate & trace genes
+```{r}
+clusStats %>%
+  dplyr::filter(
+      gene %in% base::c("hbn","scro")
+    )
+
+clus_bx %>%
+  dplyr::filter(
+      gene %in% base::c("hbn","scro")
+    )
+
+clus_comb %>%
+  dplyr::filter(
+    gene %in% base::c("hbn","scro")
+  )
+```
+
+## [3.8.] Plot heatmap of significant genes
+```{r}
+heatmap <- ggplot2::ggplot(
+      data = clus_plot,
+      mapping = aes(
+        x = cluster,
+        y = gene,
+        fill = avg
+      )
+    ) +
+  geom_tile(
+      height = 0.85,
+      width = 0.9,
+      colour = "black"
+    ) +
+  scale_fill_gradient2(
+      limits = base::c(0,6),
+      low = "darkblue",
+      mid = "white",
+      high = "darkred"
+    ) +
+  theme_bw() +
+  theme(
+      axis.text.x = element_text(
+        angle = 90,
+        vjust = 0.5,
+        hjust = 1
+      ),
+      axis.text.y = element_text(
+        size = 8
+      ),
+      axis.title = element_blank(),
+      legend.position = "none",
+      aspect.ratio = 15/12
+    )
+base::print(heatmap)
+```
+
+## [3.9.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+  ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_heatMap",
+          "_AG7AH7combined",
+          "_TaDaCluster", clusCur,
+          ".", ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 8,
+      height = 6
+    )
+  }
+```
+
+## [3.10.] Plotting
+```{r}
+plot <- ggplot2::ggplot() +
+  geom_boxplot(
+      data = clus_plot,
+      mapping = aes(
+        x = gene,
+        lower = lower,
+        upper = upper,
+        middle = median,
+        ymin = ymin,
+        ymax = ymax,
+        fill = sign
+      ),
+      outlier.shape = NA,
+      outlier.size = NA,
+      stat = "identity"
+    ) +
+  coord_flip() +
+    facet_wrap(
+      cluster~.,
+      nrow = 1
+    ) +
+  scale_fill_manual(
+      breaks = base::c(TRUE,FALSE),
+      values = base::c("#CF4343", "#3F15D2")
+    ) +
+  scale_y_continuous(
+      limits = base::c(0L,7L),
+      breaks = seq(0L,6L,2L)
+    ) +
+  theme_bw() +
+  theme(
+      legend.position = "none",
+      panel.spacing = unit(0.2, "lines"),
+      axis.title = element_blank(),
+      axis.text.y = element_text(
+        size = 6L
+      )
+    )
+  
+g1 <- ggplot2::ggplotGrob(plot)
+
+strips <- g1$layout %>%
+  tibble::as_tibble() %>%
+  dplyr::mutate(
+      feature = rownames(g1$layout),
+      rowname = row_number()
+    ) %>%
+  dplyr::filter(
+      stringr::str_detect(name, "strip-t")
+    ) %>%
+  dplyr::pull(rowname)
+
+repl <- tibble::tibble(
+      strip = strips,
+      clus = as.integer(order)
+    ) %>%
+  dplyr::mutate(
+      cols = pal[clus+1]
+    )
+
+for(i in strips){
+    #cat(i,'\t',g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill,'\n')
+    g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill <- repl[repl$strip==i,]$cols
+    #cat(i,'\t',g1$grobs[[i]]$grobs[[1]]$children[[1]]$gp$fill,'\n')
+  }
+grid::grid.newpage()
+grid::grid.draw(g1)
+```
+
+## [3.11.] sigDE TF genes of TaDa cluster 5 and 6
+```{r}
+genes_clus5 <- base::c(
+    "scro","E2f1","BEAF-32",
+    "run","opa","hng3",
+    "ham","fd102C","ey",
+    "Sp1"
+  )
+
+genes_clus6 <- base::c(
+    "HmgZ","emc","Optix",
+    "E2f1","tap","sd",
+    "D","wor","klu",
+    "SoxN","hbn","run",
+    "apt","opa","ph-p",
+    "ham","E(spl)m8-HLH","CrebA",
+    "slp2","ey","Sp1"
+  )
+```
+
+## [3.12.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxPlot",
+          "_AG7AH7combined",
+          "_sigDE",
+          "_TaDaCluster", clusCur,
+          "_difScale",
+          ".", ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 8,
+      height = 4
+    )
+  }
+```
+
+##<<necessary?_start>>
+
+##--------------------------##
+##----Plot_SCENIC_scores----##
+##--------------------------##
+
+## [14.0.] Load SCENIC activity scores
+#### see '[11.6.2.]' in '20190730_workflow_SCENIC_AH7AG7comb.Rmd' 
+```{r}
+tSNE.sep <- readRDS(
+    file = base::list.files(
+        path = here("data/20190730_SCENIC_AH7AG7comb"),
+        full.names = TRUE
+      ) %>%
+      stringr::str_subset('scoresSCENIC')
+  )
+```
+
+## [14.1.] Merge & combine data
+```{r}
+scores_scenic <- tSNE.sep %>%
+  dplyr::select(-starts_with('tsne')) %>%
+  dplyr::left_join(
+    x = cells.tsne,
+    y = .,
+    by = base::c("cell")
+  )
+```
+
+## [14.2.] Helper function to plot scoresSCENIC
+```{r}
+plotting_scenic <- function(regOI, df = scores_scenic){
+  
+    ##Format_scoresSCENIC
+    ##-------------------
+    cols <- base::c(
+        grDevices::colorRampPalette(
+            base::c("#e7f0fa", "#c9e2f6", "#95cbee", "#0099dc", "#4ab04a", "#ffd73e")
+          )(50),
+        grDevices::colorRampPalette(
+            base::c("#eec73a", "#e29421", "#e29421", "#f05336","#ce472e"),
+            bias=2
+          )(50)
+        )
+    rangE <- df %>%
+      #dplyr::select(!!rlang::sym(regOI)) %>%
+      dplyr::select(-cell,-tSNE_1,-tSNE_2,-clus) %>% 
+      tidyr::drop_na() %>% 
+      base::range()
+    maxSc <- ifelse(
+        base::round(rangE[2],digits = 1) > rangE[2],
+        base::round(rangE[2],digits = 1),
+        base::round(rangE[2]+0.05,digits = 1)
+      )
+    ##Format_label
+    ##------------
+    anno <- df %>%
+      dplyr::summarise(
+          x_one = base::min(tSNE_1),
+          x_two = base::max(tSNE_1),
+          y_one = base::min(tSNE_2),
+          y_two = base::max(tSNE_2),
+          x_coor = x_one + (0.025*(base::abs(x_one) + base::abs(x_two))),
+          y_coor = y_two - (0.025*(base::abs(y_one) + base::abs(y_two)))
+        ) %>%
+      dplyr::select(x_coor,y_coor) %>%
+      base::unlist()
+    ##Format_data
+    ##-----------
+    df_plot <- df %>%
+      dplyr::arrange(
+        !!rlang::sym(regOI)
+      )
+  
+    plot <- ggplot2::ggplot(
+          data = df_plot,
+          mapping = aes(
+            x = tSNE_1,
+            y = tSNE_2,
+            colour = !!rlang::sym(regOI)
+          )
+        ) +
+      geom_point() +
+      annotate(
+          geom = "text",
+          label = regOI,
+          x = anno[1],
+          y = anno[2],
+          hjust = 0,
+          color = "black",
+          size = 4L,
+          fontface = 4
+        ) +
+      scale_colour_gradientn(
+          colours = cols,
+          limits = base::c(0,maxSc)
+        ) +
+      theme_bw() +
+      theme(
+          aspect.ratio = 1
+        ) +
+      guides(
+          colour = guide_colourbar(
+            label.position = "right",
+            title = NULL,
+            title.position = "left",
+            title.theme = element_text(
+              angle = 90,
+              hjust = 0.5
+            ),
+            ticks=T,
+            nbin=100,
+            barheight=10,
+            label=T,
+            barwidth=0.5
+          )
+        )
+    base::print(plot)
+    return(plot)
+  }
+```
+
+## [14.3.] Plot scoresSCENIC onto Seurat tSNE
+#### test: regOI = "scro_extended (108g)"
+```{r}
+regulonsOI <- scores_scenic %>%
+  dplyr::select(-cell,-tSNE_1,-tSNE_2,-clus) %>%
+  base::colnames()
+
+regulonsOI_plots <- tibble::tibble(
+      regulon = regulonsOI
+    ) %>%
+  dplyr::mutate(
+    plot = purrr::map(
+        .x = regulonsOI,
+        .f = plotting_scenic,
+        df = scores_scenic
+      )
+    )
+```
+
+## [14.4.] Save plots
+```{r}
+regulonsOI_plots <- regulonsOI_plots %>%
+  dplyr::mutate(
+    fileOut = purrr::pmap_chr(
+      .l =list(
+          regulon,
+          plot
+        ),
+      .f = function(r,p){
+        idOut = stringr::str_replace(r,'^(.*)\\s.*','\\1')
+        fnOut = base::paste0(
+            here::here("results/20190730_SCENIC_AH7AG7comb/"),
+            base::format(base::Sys.time(), "%Y%m%d"),
+            "_scatterPlot",
+            "_AG7AH7combined",
+            "_scoresSCENIC",
+            "_", idOut,
+            ".pdf"
+          )
+        ggplot2::ggsave(
+            filename = fnOut,
+            plot = p,
+            device = 'pdf',
+            dpi = 300,
+            width = 6,
+            height = 5
+          )
+        return(fnOut)
+      }
+    )    
+  )
+```
+
+##<<necessary?_start>>
+
+##--------------------------------------##
+##----Markers_individual_comparisons----##
+##--------------------------------------##
+
+## [4.0.] Cluster 3-specific genes separating 3,5 and 6
+#### INP-vs-trachea clusters
+```{r}
+clus3_vs_56 <- Seurat::FindMarkers(
+    object = inps,
+    ident.1 = 3L,
+    ident.2 = base::c(5L,6L),
+    min.pct = 0.1
+  )
+```
+
+## [4.1.] Edit clus3_vs_56
+```{r}
+clus3_vs_56_edit <- clus3_vs_56 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::arrange(p_val_adj)
+
+clus3_vs_56_tfs <- clus3_vs_56 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::filter(symbol %in% tfs) %>%
+  dplyr::arrange(desc(avg_logFC))
+```
+
+## [4.2.] Save clus3_vs_56_edit
+```{r}
+utils::write.table(
+    x = clus3_vs_56_edit,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clus3_vs_56",
+        "_allGenes",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+## [4.3.] Cluster 6-specific genes separating 3,5 and 6
+```{r}
+clus6_vs_35 <- Seurat::FindMarkers(
+    object = inps,
+    ident.1 = 6L,
+    ident.2 = base::c(3L,5L),
+    min.pct = 0.1
+  )
+```
+
+## [4.4.] Edit clus6_vs_35
+```{r}
+clus6_vs_35_edit <- clus6_vs_35 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::arrange(p_val_adj)
+
+clus6_vs_35_tfs <- clus6_vs_35 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::filter(symbol %in% tfs) %>%
+  dplyr::arrange(dplyr::desc(avg_logFC))
+```
+
+## [4.5.] Save clus6_vs_35_edit
+```{r}
+utils::write.table(
+    x = clus6_vs_35_edit,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clus6_vs_35",
+        "_allGenes",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+## [4.6.] Cluster 5-specific genes separating 3,5 and 6
+```{r}
+clus5_vs_36 <- Seurat::FindMarkers(
+    object = inps,
+    ident.1 = 5L,
+    ident.2 = base::c(3L,6L),
+    min.pct = 0.1
+  )
+```
+
+## [4.7.] Edit clus5_vs_36
+```{r}
+clus5_vs_36_edit <- clus5_vs_36 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::arrange(p_val_adj)
+
+clus5_vs_36_tfs <- clus5_vs_36 %>%
+  tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::filter(symbol %in% tfs) %>%
+  dplyr::arrange(dplyr::desc(avg_logFC))
+```
+
+## [4.8.] Save clus5_vs_36_edit
+```{r}
+utils::write.table(
+    x = clus5_vs_36_edit,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clus5_vs_36",
+        "_allGenes",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+## [4.9.] Cluster 3-specific genes separating 3 from all other clusters
+```{r}
+clus3_vs_all <- Seurat::FindMarkers(
+    object = inps,
+    ident.1 = 3L,
+    min.pct = 0.1
+  )
+```
+
+## [4.10.] Edit clus3_vs_all
+```{r}
+clus3_vs_all_edit <- clus3_vs_all %>%
+   tibble::as_tibble(
+      rownames = "symbol"
+    ) %>%
+  dplyr::arrange(p_val_adj)
+```
+
+## [4.11.] Save clus3_vs_all_edit
+```{r}
+utils::write.table(
+    x = clus3_vs_all_edit,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_clus3_vs_allOtherClusters",
+        "_allGenes",
+        ".tsv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+##-------------------------------##
+##----Visualize_distributions----##
+##-------------------------------##
+
+##<<unnecessary_start>>
+
+## [10.2.] Under the hood of ggplot2 graphics
+#### Note: ggplotGrob is a short version of ggplot_gtable(ggplot_build(x))
+```{r eval=FALSE, collapse=TRUE}
+gtable_select <- function(x,...){
+  matches <- base::c(...)
+  x$layout <- x$layout[matches, , drop=FALSE]
+  x$grobs <- x$grobs[matches]
+  return(x)
+}
+
+gtable_stack <- function(g1, g2){
+  g1$grobs <- base::c(g1$grobs, g2$grobs)
+  g1$layout <- transform(g1$layout, z= z-max(z), name="g2")
+  g1$layout <- rbind(g1$layout, g2$layout)
+  return(g1)
+}
+
+rect <- ggplot(
+    data = agg.data,
+    mapping = aes(
+      x = gene,
+      y = exp
+    )
+  ) +
+  coord_flip() +
+  facet_wrap(
+    cluster~.,
+    nrow = 1
+  ) +
+  geom_rect(
+    aes(
+      fill = cluster
+    ),
+    xmin = -Inf,
+    xmax = Inf,
+    ymin = -Inf,
+    ymax = Inf
+  ) +
+  scale_fill_manual(
+    limits = all_cluster,
+    breaks = all_cluster,
+    values = pal.use
+  )
+
+g2 <- ggplotGrob(rect)
+
+panels <- grepl(pattern = "panel", g2$layout$name)
+strips <- grepl(pattern = "strip-t", g2$layout$name)
+g2$layout$t[panels] <- g2$layout$t[panels]-1
+g2$layout$b[panels] <- g2$layout$b[panels]-1
+g2$layout <- g2$layout[panels|strips,]
+g2$grobs <- g2$grobs[panels|strips]
+grid.newpage()
+grid.draw(g2)
+
+base::attributes(g2$grobs[[62]])
+base::attributes(g2$grobs[[62]]$grobs[[1]])
+str(g2$grobs[[62]]$grobs[[1]]$children[[2]]$children[[1]]$label)
+str(g2$grobs[[64]]$grobs[[1]]$children[[2]]$children[[1]]$label)
+
+str(g2$grobs[[73]]$grobs[[1]])
+str(g2$grobs[[73]]$grobs[[1]]$children$GRID.titleGrob.43914$children)
+
+base::attributes(g2$grobs[[62]]$widths)
+g2$grobs[[62]]$widths[[1]]
+base::attributes(g2$grobs[[62]]$heights)
+g2$grobs[[62]]$heights$arg1
+base::attributes(g2$grobs[[62]]$layout)
+g2$grobs[[62]]$layout
+
+##gtable_select
+new_strips <- gtable_select(g2, panels)
+grid.newpage()
+grid.draw(new_strips)
+new_plot <- gtable_stack(g1, new_strips)
+grid.newpage()
+grid.draw(new_plot)
+```
+
+##<<unnecessary_end>>
+
+## [5.0.] Apply reader() & plotter() to clusStats
+```{r}
+curClus = 7L
+
+clusSep <- clusStats %>%
+  dplyr::filter(avg_logFC>1) %>%
+  dplyr::filter(clus == curClus) %>%
+  dplyr::pull(gene)
+
+clusSep.agg.data <- .GlobalEnv$reader(inps,clusSep,FALSE)
+g1 <- .GlobalEnv$plotter(clusSep.agg.data, pal)
+grid::grid.newpage()
+grid::grid.draw(g1)
+```
+
+## [5.1.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot",
+          "_clus", curClus,
+          ".", ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 3
+    )
+  }
+```
+
+## [5.2.] Subset INP-specific genes (i.e., clus3) for TFs
+#### evaluate with 'stringr::str_subset(clusTF, "scro|hbn")'
+```{r}
+clusCur =  3L
+clusTF <- clusStats %>%
+  dplyr::filter(gene %in% tfs) %>%
+  dplyr::filter(clus == clusCur) %>%
+  dplyr::filter(p_val_adj<0.05) %>%
+  dplyr::arrange(avg_logFC) %>%
+  dplyr::pull(gene)
+```
+
+## [5.3.] Apply reader() & plotter() to clusTF
+```{r}
+clusTF.agg.data <- .GlobalEnv$reader(inps,clusTF,FALSE)
+g1 <- .GlobalEnv$plotter(clusTF.agg.data, pal)
+grid::grid.newpage()
+grid::grid.draw(g1)
+```
+
+## [5.4.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot",
+          "_clusTF", clusCur,
+          ".", ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 9
+    )
+  }
+```
+
+##----------------------------------##
+##----Plot_Transcription_factors----##
+##----------------------------------##
+
+##<<unnecessary_start>>
+
+## [6.0.] Read in Bayrakter transcritpion factors
+```{r}
+tfs <- readr::read_delim(
+    file = here::here('data/20190117_Bayraktar_FlyBase_TFIDs.txt'),
+    col_names = base::c("FBgnID","name","symbol"),
+    col_types = "ccc",
+    delim = "\t",
+    quote = "",
+    skip = 1
+  )
+
+tfs.v1 <- tfs %>%
+  dplyr::pull(symbol)
+```
+
+## [6.1.] Apply reader() & plotter() on Bayrakter TFs
+```{r}
+agg.data <- .GlobalEnv$reader(inps,tfs.v1,FALSE)
+g1 <- .GlobalEnv$plotter(agg.data,pal)
+grid::grid.newpage()
+grid::grid.draw(g1)
+```
+
+## [6.2.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          "20190125_boxplot_BayraktarTFs_preimputation.",
+          ext
+        ),
+      plot = g1,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+## [6.3.] Imputation of values for tfs
+```{r}
+inps <- Seurat::AddImputedScore(
+    object = inps,
+    genes.fit = tfs.v1,
+    do.print = TRUE
+  )
+```
+
+## [6.4.] Apply reader() & plotter() on Bayrakter TFs
+```{r}
+agg.data <- .GloalEnv$reader(inps,tfs.v1,FALSE)
+g2 <- .GloalEnv$plotter(agg.data,pal)
+grid::grid.newpage()
+grid::grid.draw(g2)
+```
+
+## [6.5.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          "20190125_boxplot_BayraktarTFs_postimputation.",
+          ext
+        ),
+      plot = g2,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+##<<unnecessary_end>>
+
+## [6.0.] Identify TFs separate for specific INP cluster
+```{r}
+tfs.v2 <- base::c(
+    "D", "grh", "ey",
+    "mira", "dpn", "ase",
+    "insc", "wor", "cas",
+    "tap", "scro", "run",
+    "sna", "pros", "lola",
+    "klu", "luna", "hth",
+    "disco-r", "ab", "gl",
+    "disco"
+  )
+```
+
+## [6.1.] Apply reader() and plotter() to chosen TFs
+```{r}
+agg.data <- .GlobalEnv$reader(inps,tfs.v2,FALSE)
+g <- .GlobalEnv$plotter(agg.data,pal)
+grid::grid.newpage()
+grid::grid.draw(g)
+```
+
+## [6.2.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot",
+          "_separatingTFs",
+          "_preImputation",
+          ".", ext
+        ),
+      plot = g,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+## [6.3.] Imputation of values for tfs
+```{r}
+inps <- Seurat::AddImputedScore(
+    object = inps,
+    genes.fit = tfs.v2,
+    do.print = TRUE
+  )
+```
+
+## [6.4.] Apply reader() & plotter() on chosen TFs
+```{r}
+agg.data <- .GlobalEnv$reader(inps,tfs.v2,FALSE)
+g <- .GlobalEnv$plotter(agg.data,pal)
+grid::grid.newpage()
+grid::grid.draw(g)
+```
+
+## [6.5.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot",
+          "_separatingTFs",
+          "_postImputation",
+          ext
+        ),
+      plot = g,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+## [6.6.] Save & load data
+```{r}
+base::saveRDS(
+    object = inps,
+    file = base::paste0(
+        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        base::format(base::Sys.time(), "%Y%m%d"),
+        "_inps",
+        "_combinedDataset_AH7AG7",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+#### "20190121_inps_combinedDataset_AH7AG7.rds"
+```{r}
+inps <- base::readRDS(
+  file = base::list.files(
+        path = here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("rds") %>%
+    stringr::str_subset("AH7AG7")
+  )
+```
+
+##<<unnecessary_start>>
+
+## [10.4.] Visualize the expression distribution of the selected genes in their clusters
+#### Note: __Deprecated__
+```{r fig.height=3,fig.width=2}
+Seurat::FeaturePlot(
+    object = inps,
+    features.plot = tf,
+    min.cutoff = "q9",
+    cols.use = base::c("grey80", "red"),
+    pt.size = 0.5,
+    no.axes = TRUE
+  )
+```
+
+##------------------##
+##----Deprecated----##
+##------------------##
+
+## [10.1.] Helper function to visualize the expression distribution of the selected genes in their clusters
+```{r eval=FALSE}
+plotter <- function(df){
+  
+  plot <- ggplot2::ggplot(
+        data = df,
+        mapping = aes(
+          x = gene,
+          y = exp,
+          colour = cluster
+        )
+      ) +
+    coord_flip() +
+    facet_wrap(
+        facets  = cluster ~.,
+        nrow = 1
+      ) +
+    geom_boxplot(
+        outlier.shape = NA,
+        outlier.size = NA
+      ) +
+    #geom_violin() +
+    theme_bw() +
+    theme(
+        legend.position = "none"
+      )
+    
+    return(plot)
+  }
+```
+
+## [10.8.] Apply reader() & plotter() to tf with imputed values
+#### Note: list derived from Bayrakter, O.A. & Doe, C., 2013
+```{r fig.width=4,fig.heigth=4}
+agg.data <- .GlobalEnv$reader(inps,tf,TRUE)
+agg.plot <- .GlobalEnv$plotter(agg.data)
+base::print(agg.plot)
+```
+
+## [10.9.] Imputation of values for tfs
+```{r}
+inps <- Seurat::AddImputedScore(
+    object = inps,
+    genes.fit = geneset,
+    do.print = TRUE
+  )
+```
+
+## [10.10.] Apply reader() & plotter() to tf with imputed values
+#### Note: marker list from geneset
+```{r fig.height=4,fig.width=4}
+geneset <- base::c(
+    "dpn", "mira", "ase",
+    "pros", "erm", "btd", "lola",
+    "hth", "exd", "tll",
+    "D", "ey", "grh",
+    "repo", "Cyp4g15", "moody",
+    "nSyb", "elav", "Fas2"
+  )
+
+geneset <- base::c("D", "ey", "grh")
+
+agg.data <- .GlobalEnv$reader(inps,geneset,FALSE)
+agg.plot <- .GlobalEnv$plotter(agg.data)
+base::print(agg.plot)
+```
+
+##-------------------------##
+##----End_of_Deprecated----##
+##-------------------------##
+
+##<<unnecessary_end>>
+
+## [7.0.] Application of preper() & plotOnTsne() helper functions
+```{r}
+tfs_plot <- tibble::tibble(
+      tf = base::c("hbn","scro", "erm")
+    ) %>%
+  dplyr::mutate(
+    data = purrr::map(
+      .x = tf,
+      .f = function(t){
+        return(
+          .GlobalEnv$preper(
+              container = inps,
+              geneChos = t
+            )
+          )
+        }
+      ),
+    plot = purrr::pmap(
+      .l = list(
+          tf, data
+        ),
+      .f = function(t,d){
+        plot <- .GlobalEnv$plotOnTsne(
+            comb = d,
+            title = t,
+            ran = base::c(0,4.5),
+            leg = "right"
+          )
+        base::print(plot)
+        return(plot)
+      }
+    )
+  )
+```
+
+## [7.1.] Evaluation
+```{r}
+tfs_plot %>%
+  dplyr::select(-plot) %>%
+  tidyr::unnest(data) %$%
+  base::range(gene)
+
+tfs_plot %>%
+  dplyr::select(-plot) %>%
+  tidyr::unnest(data) %$%
+  base::max(gene)
+```
+
+## [7.2.] Print plots
+```{r}
+tfs_plot <- tfs_plot %>%
+  dplyr::mutate(
+    fileOut = purrr::pmap_chr(
+      .l = base::list(
+          tf, plot
+        ),
+      .f = function(t,p){
+        fnOut = base::paste0(
+            here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+            base::format(base::Sys.time(), "%Y%m%d"),
+            "_scatterPlot",
+            "_AG7AH7combined",
+            "_expressionSeurat",
+            "_", t,
+            ".pdf"
+          )
+        ggplot2::ggsave(
+            filename = fnOut,
+            plot = p,
+            device = 'pdf',
+            dpi = 300,
+            width = 6,
+            height = 5
+          )
+        return(fnOut)
+      }
+    )    
+  )
+```
+
+## [7.3.] Print distribution for TF marker genes
+#### previous rendering 'fig.width=3, fig.height=3'
+```{r}
+# tfs <- base::c(
+#     "mira","dpn","ase",
+#     "insc","klu","wor",
+#     "hth","pros","lola"
+#   )
+tfs <- base::c("scro", "hbn")
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg = "none",
+        coef = 0.35
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 2,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.4.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+            here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+            base::format(base::Sys.time(), "%Y%m%d"),
+            "_expressionTSNE",
+            "_TFmarker",
+            "_scroHbnComb",
+            "_rast",
+            ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 10,
+      height = 6
+    )
+  }
+```
+
+## [7.5.] Print distribution for TF marker genes
+#### previous figure renderings 'fig.height=1.25,fig.width=3'
+```{r}
+#tfs <- base::c("Hey","gcm")
+tfs <- base::c("D","grh","ey")
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr, legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.6.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_TFmarker",
+          "_dGrhEyComb",
+          "_rast",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 5,
+      height = 3
+    )
+  }
+```
+
+## [7.7.] Print distribution of clus3-specific TFs
+#### previous rendering: 'fig.height=4,fig.width=3'
+```{r}
+# tfs <- base::c(
+#     "HmgZ","tap", "scro",
+#     "klu", "opa", "Dref",
+#     "apt", "run", "Dek",
+#     "Optix","hbn", "slp2",
+#     "ham", "SoxN", "E2f2",
+#     "esc", "mod", "sna"
+#   )
+tfs <- base::c(
+      "crol", "bsh", "repo"
+    )
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb  = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.8.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggploot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_TFmarker",
+          "_crolBshRepoComb",
+          "_rast",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 8
+    )
+  }
+```
+
+## [7.9.] Print expression distributions
+#### previous rendering: 'fig.height=4,fig.width=3'
+```{r }
+tfs <- base::c(
+    "Mcm7","Mcm2", "tum",
+    "borr", "Mcm5", "CG4570",
+    "Pen", "Mcm3", "Incenp",
+    "HmgD", "aurB", "Rcc1",
+    "Bacc", "baf", "Mcm6",
+    "msd1", "CG1910", "Caf1",
+    "Ibf2", "RPA2", "geminin",
+    "asf1"
+  )
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.10.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_TFmarker",
+          "_clus3specmarkers_v2",
+          "_rast",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 10
+    )
+  }
+```
+
+## [7.11.] Distributions of TFs derived from NanoDam clustering
+#### previous rendering: 'fig.height=4,fig.width=3'
+```{r }
+clusCur=5L
+tfs <- clus[[clusCur]]
+
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg  = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.12.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_TFmarker",
+          "_ndClus", clusCur,
+          "_rast",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 14
+    )
+  }
+```
+
+## [7.13.] Plot expression distributions
+```{r}
+tfs = base::c(
+    "Awh", "tup", "Dref",
+    "fd102C", "ap", "Slbp",
+    "ewg", "pita", "TfAP-2"
+  )
+
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg  = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [7.14.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_TFmarker",
+          "_tupAwhDref",
+          "_rast",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 10,
+      height = 14
+    )
+  }
+```
+
+##---------------------------##
+##----Analyse_NanoDam_TFs----##
+##---------------------------##
+
+## [8.0.] Load sortTF
+#### see [2.6.] of 'Data_wrangling' in '20181211_workflow_peakAnno.Rmd'
+```{r}
+sortTF <- base::readRDS(
+  file = base::list.files(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        full.names = TRUE
+      ) %>%
+    stringr::str_subset("sortTF") %>%
+    stringr::str_subset("20211129")
+  )
+```
+
+## [8.1.] Subset genes for clusters
+```{r}
+clusCur = 6L
+antipattern <- base::c("Mondo", "FoxK")
+
+geneTF <- sortTF %>%
+  dplyr::mutate(
+      kclus = base::as.integer(kclus)
+    ) %>%
+  dplyr::filter(kclus == clusCur) %>%
+  dplyr::filter(
+      !(external_gene_name %in% antipattern)
+    ) %>% 
+  dplyr::distinct(external_gene_name) %>%
+  dplyr::pull(external_gene_name)
+```
+
+## [8.2.] Apply reader() & plotter() to geneTF
+```{r}
+geneTF.agg.data <- .GlobalEnv$reader(inps,geneTF,FALSE)
+g <- .GlobalEnv$plotter(geneTF.agg.data, pal)
+grid::grid.newpage()
+grid::grid.draw(g)
+```
+
+## [8.3.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot",
+          "_geneTF",
+          "_clus", clusCur,
+          ".", ext
+        ),
+      plot = g,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 10
+    )
+  }
+```
+
+## [8.4.] TFs identified to be expressed in INPs according to scRNASeq
+#### see [2.7.] of 'Data_wrangling' in '20181211_workflow_peakAnno.Rmd'
+```{r}
+clus <- base::list()
+clus[[2]] <- base::c(
+    "dpn","ase","cas",
+    "E(spl)mbeta-HLH","slp2","aop",
+    "mip120","opa","Optix",
+    "crol","zfh2","jumu",
+    "Oli","lilli","Mad"
+  )
+clus[[3]] <- base::c(
+    "su(Hw)","Rbf","hth",
+    "Lim1","phol","Eip75B",
+    "ph-p","hng1","bigmax",
+    "MTA1-like","sna","E(bx)",
+    "lilli","SoxN","mod",
+    "apt","zfh2","E2f1",
+    "Su(var)2-10","ktub","lid",
+    "Optix"
+  )
+clus[[4]] <- base::c(
+    "Pep","ham","lilli",
+    "hng3","slp2","ewg",
+    "noc","Myb","Smox",
+    "zfh2","crp","Hsf",
+    "Eip75B","hth","apt",
+    "SoxN","pros","Su(var)205",
+    "klu","sd","corto"
+  )
+clus[[5]] <- base::c(
+    "ey","fd102C","Gug",
+    "Su(H)","Psc","Eip75B",
+    "ham","crp","Lim1",
+    "BEAF-32","opa","crc",
+    "run","E2f1","Mnt","scro",
+    "hng3","zfh2"
+  )
+clus[[6]] <- base::c(
+    "hth","aop","run",
+    "stwl","Lim1","trx",
+    "Eip75B","sd","Optix",
+    "apt","ham","corto",
+    "ey","ph-p","Gug",
+    "E2f1","pros","D",
+    "slp2","E(spl)m8-HLH","hbn",
+    "tap","SoxN","HmgZ",
+    "CrebA","scrt","noc",
+    "wor","klu","emc",
+    "opa"
+  )
+```
+
+## [8.5.] Apply reader() & plotter() on TF-subsets derived from NanoDam-cluster
+```{r}
+clusCur = 4L
+
+agg.data <- .GlobalEnv$reader(
+    object = inps,
+    genes = clus[[clusCur]],
+    impute = FALSE
+  )
+g <- .GlobalEnv$plotter(
+    df = agg.data,
+    pal = pal
+  )
+grid.newpage()
+grid.draw(g)
+```
+
+## [8.6.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggploot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_boxplot_subsetTF_clus", clusCur,
+          ".", ext
+        ),
+      plot = g,
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+##-----------------------##
+##----Cluster_markers----##
+##-----------------------##
+
+## [9.0.] Identify synonym used for particular gene
+```{r}
+##----narrow----##
+secFbIDs <- base::c(
+  "FBgn0002974","FBgn0262720","FBgn0061355",
+  "FBgn0034227","FBgn0053006","FBgn0061354",
+  "FBgn0022342","FBgn0283508"
+  )
+syn <- base::c(
+    "Bla","CG18431","CG33006",
+    "CG43164","CG4844","anon2D7",
+    "lance","nw","Blade","narrow",
+    "anon-fast-evolving-2D7"
+  )
+##--------------##
+
+##----exex----##
+syn <- base::c(
+    "CG8254","DHB9","Exex",
+    "HB9","Hb9","dHB9",
+    "dHb9","dhb9","exex",
+    "Extra-extra","extra-extra"
+  )
+##------------##
+
+tibble::tibble(
+      id = syn
+    ) %>%
+  dplyr::mutate(
+    info = purrr::map(
+      .x = syn,
+      .f = function(x){
+        tryCatch(
+          {
+            Seurat::FetchData(
+                object = inps,
+                vars.all = x,
+                cells.use = base::colnames(inps@data),
+                use.imputed = FALSE
+              )
+          },
+          error = function(cond){
+              base::message(cond)
+              return(NA)
+          },
+          warning = function(cond){
+              base::message(cond)
+              return(NA)
+          }
+        )
+      }
+    )
+  )
+```
+
+## [9.1.] Actual gene patterns
+```{r}
+##trachea
+tfs <- base::c(
+  "sas","pio","Cht2",  
+  "CG43164","Tom","wbl"
+  )
+
+##vnc
+tfs <- base::c(
+    "exex","Sox14","vri"
+  )
+
+##differentiating markers
+tfs <- base::c(
+    "Hey","elav","nSyb",
+    "repo"
+  )
+
+tfs <- base::c(
+  "hbn","pita","heph",
+  "Ote"
+)
+```
+
+## [9.2.] Plot gene expression on tSNE
+```{r}
+nrows = base::as.integer(base::ceiling(base::length(tfs)/3))
+
+plots <- base::lapply(
+    X = tfs,
+    FUN = function(x){
+      .GlobalEnv$plotOnTsne(
+        comb = .GlobalEnv$preper(inps, x),
+        title = x,
+        ran = base::c(0,6.5),
+        leg  = "none"
+      )
+    }
+  )
+
+legend <- cowplot::get_legend(
+    .GlobalEnv$plotOnTsne(
+      comb = .GlobalEnv$preper(inps, tfs[1]),
+      title = tfs[1],
+      ran = base::c(0,6.5)
+    )
+  )
+
+majr <- cowplot::plot_grid(
+    plotlist = plots,
+    ncol = 3,
+    nrow = nrows,
+    align = "v",
+    axis = "l"
+  )
+cowplot::plot_grid(
+    majr,legend,
+    ncol = 2,
+    align = "h",
+    axis = "t",
+    rel_widths = base::c(9,1)
+  )
+```
+
+## [9.3.] Save plot
+```{r}
+for(ext in base::c("pdf", "png")){
+    ggplot2::ggsave(
+      filename = base::paste0(
+          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          base::format(base::Sys.time(), "%Y%m%d"),
+          "_expressionTSNE",
+          "_inpClus",
+          ".", ext
+        ),
+      plot = ggplot2::last_plot(),
+      device = ext,
+      dpi = 300,
+      width = 6,
+      height = 4
+    )
+  }
+```
+
+##-----------------------------##
+##----Expression_Statistics----##
+##-----------------------------##
+
+## [10.0.] Identify cell-to-cluster association
+```{r}
+clus.cells <- tibble::tibble(
+    cell = names(inps@ident),
+    clus = inps@ident
+  )
+
+clusters <- clus.cells %>%
+  dplyr::distinct(clus) %>%
+  dplyr::arrange(clus) %>%
+  dplyr::pull(clus)
+```
+
+## [10.1.] Read out expression & test statistics
+#### evaluate with 'dplyr::filter(clus.eStage,gene %in% base::c("crol", "scro", "ase","dpn"))'
+```{r}
+clus.eStage <- Seurat::AverageExpression(
+      object = inps,
+      return.seurat = FALSE,
+      use.scale = TRUE
+    ) %>% 
+  tibble::rownames_to_column(var = "gene") %>%
+  tidyr::gather(
+      key = "cluster",
+      value = "mean",
+      -gene
+    ) %>%
+  dplyr::mutate(
+      cluster = base::factor(
+        x = cluster,
+        levels = clusters,
+        ordered = TRUE
+      )
+    )
+```
+
+## [10.2.] Apply FindAllMarkers()
+#### evaluate with 'stats.eStage %>% dplyr::group_by(cluster) %>% dplyr::summarise(n =  dplyr::n())'
+```{r}
+stats.eStage <- Seurat::FindAllMarkers(
+      object = inps,
+      genes.use = NULL,
+      logfc.threshold = 0,
+      test.use = "wilcox",
+      min.pct = 0,
+      only.pos = FALSE,
+      return.thresh = 1
+    ) %>%
+  dplyr::mutate(
+      cluster = base::factor(
+        x = cluster,
+        levels = clusters,
+        ordered = TRUE
+      )
+    )
+```
+
+## [10.3.] Combine both datasets
+```{r}
+expr.eStage <- dplyr::left_join(
+    x = clus.eStage,
+    y = stats.eStage,
+    by = base::c("gene", "cluster")
+  )
+```
+

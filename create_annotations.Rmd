@@ -1,0 +1,302 @@
+---
+title: "20181211_workflow_StreamID"
+author: "R_Krautz"
+date: "11/12/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [0.0.] Load necessary packages
+```{r message=FALSE}
+base::library(tidyverse)
+base::library(magrittr)
+```
+
+##--------------------##
+##----Acquire_data----##
+##--------------------##
+
+## [1.0.] Identify mart
+#### listMarts() -> listDatasets()
+```{r}
+species <- "melanogaster"
+
+dataset_species <- biomaRt::useMart(
+    biomart = "ENSEMBL_MART_ENSEMBL"
+  ) %>% 
+  biomaRt::listDatasets() %>%
+  dplyr::filter(
+    base::grepl(
+        pattern = base::paste0('.*',species,'.*'),
+        x = dataset
+      )
+    ) %>%
+  dplyr::select(dataset) %>%
+  base::unlist() %>%
+  base::unname()
+
+BDGP6.mart <- biomaRt::useMart(
+    biomart = "ENSEMBL_MART_ENSEMBL",
+    dataset = dataset_species
+  )
+```
+
+## [1.1.] Identify filters & attributes for biomart::getBM()
+```{r}
+biomaRt::listAttributes(
+      mart = BDGP6.mart
+    ) %>%
+  dplyr::filter(page=="sequences")
+
+biomaRt::listFilters(
+    mart = BDGP6.mart
+  )
+```
+
+## [1.2.] Prototypical example for a getBM() command
+#### kallisto demands cdna fasta files
+#### biomaRt's 'cdna' sequences comply to that demand
+```{r}
+attr <- base::c(
+    "cdna",
+    "ensembl_gene_id",
+    "external_gene_name",
+    "chromosome_name",
+    "start_position",
+    "end_position",
+    "gene_biotype",
+    "ensembl_transcript_id",
+    "strand",
+    "transcription_start_site"
+  )
+
+biomaRt::getBM(
+      mart = BDGP6.mart,
+      attributes = attr,
+      filters = base::c("ensembl_gene_id"),
+      values = base::c("FBgn0000015")
+    ) %>%
+  mutate(
+      length = stringr::str_length(cdna)
+    ) %>% 
+  dplyr::select(length,attr)
+```
+
+## [2.0.] Download cdna sequences of all BDGP6 genes
+#### Order of attr complies with expected order from listAttributes()
+#### This order prevents wrong col_name assignments
+```{r}
+attr <- base::c(
+    "cdna",
+    "ensembl_gene_id",
+    "external_gene_name",
+    "chromosome_name",
+    "start_position",
+    "end_position",
+    "gene_biotype",
+    "ensembl_transcript_id",
+    "strand",
+    "transcription_start_site"
+  )
+
+BDGP6.bm <- biomaRt::getBM(
+    mart = BDGP6.mart,
+    attributes = attr
+  )
+```
+
+## [2.1.] Save & load BDGP6.bm for future use
+```{r}
+base::saveRDS(
+    object = BDGP6.bm,
+    file = base::paste0(
+        here::here("resources/"),
+        "BDGP6.bm.all_transcripts",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+```{r}
+BDGP6.bm <- base::readRDS(
+    file = base::paste0(
+      here::here("resources/"),
+      "BDGP6.bm.all_transcripts",
+      ".rds"
+    )
+  )
+```
+
+```{r}
+utils::write.table(
+    x = BDGP6.bm,
+    file = base::paste0(
+        here::here("resources/"),
+        "BDGP6.bm.all_transcripts",
+        ".csv"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    eol = "\n",
+    row.names = FALSE,
+    col.names = TRUE
+  )
+```
+
+##------------------##
+##----cDNA_fasta----##
+##------------------##
+
+## [2.2.] Prototypical example for formatting & writing the sequences out
+### Replace empty cdna cells 'test %>% mutate(cdna = str_replace(cdna,"^$", "NA"))'
+```{r}
+base::set.seed(0)
+test_ <- dplyr::slice_sample(BDGP6.bm, n = 100)
+
+test <- test_ %>%
+  dplyr::mutate(
+    faHeader = base::paste0(
+        ">", ensembl_transcript_id,
+        "\t", ensembl_gene_id,
+        "\t", external_gene_name,
+        "\t", gene_biotype,
+        "\t", chromosome_name
+      ),
+      seq = stringr::str_replace_all(cdna, '(.{60}?)', '\\1\n')
+    ) %>%
+  dplyr::select(faHeader,seq)
+
+utils::write.table(
+    x =  test,
+    file = base::paste0(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        "tester.fa"
+      ),
+    sep = "\n",
+    eol = "\n",
+    col.names = FALSE,
+    row.names = FALSE,
+    quote = FALSE
+  )
+```
+
+## [2.3.] Formatting sequences
+```{r}
+BDGP6.bm.out <- BDGP6.bm %>%
+  dplyr::mutate(
+      cdna = stringr::str_replace(cdna,"^$", "NA")
+    ) %>%
+  dplyr::mutate(
+      faHeader = base::paste0(
+        ">", ensembl_transcript_id,
+        "\t", ensembl_gene_id,
+        "\t", external_gene_name,
+        "\t", gene_biotype,
+        "\t", chromosome_name
+      ),
+      seq = stringr::str_replace_all(cdna, '(.{60}?)', '\\1\n')
+    ) %>%
+  dplyr::select(faHeader,seq)
+```
+
+## [2.4.] Writing out sequences as fasta
+```{r}
+utils::write.table(
+    x = BDGP6.bm.out ,
+    file = base::pasteo(
+        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks/"),
+        "BDGP6.bm.all_transcripts.fa"
+      ),
+    sep = "\n",
+    eol = "\n",
+    col.names = FALSE,
+    row.names = FALSE,
+    quote = FALSE
+  )
+```
+
+## [2.5.] Evaluate the amount of identified protein_coding genes
+```{r}
+BDGP6.bm %>%
+  dplyr::group_by(gene_biotype) %>%
+  dplyr::summarise(amount = dplyr::n())
+```
+
+##------------##
+##----TSSs----##
+##------------##
+
+## [3.0.] Generate *.bed file for TSSs from BDGP6.bm
+#### Additional filters 'dplyr::select(-contains("id_version")) %>% dplyr::filter(gene_biotype == "protein_coding")'
+```{r}
+sel_chrom <- base::c("2L", "2R", "3L", "3R", "4","MT", "X", "Y")
+
+BDGP6.bm.mod <- BDGP6.bm %>%
+  dplyr::filter(
+      chromosome_name %in% sel_chrom &
+      gene_biotype == "protein_coding"
+    ) %>%
+  dplyr::select(4:6,2,8,3,9:10,7) %>% 
+  dplyr::rename(
+      start = transcription_start_site
+    ) %>% 
+  dplyr::mutate(
+      chromosome_name = base::factor(
+          x = chromosome_name,
+          levels = sel_chrom,
+          ordered = TRUE
+        ),
+      strand = dplyr::case_when(
+          strand == "1" ~ "+",
+          strand == "-1" ~ "-"
+        ),
+      end = dplyr::case_when(
+          strand == "+" ~ base::as.integer(start+1),
+          strand == "-" ~ start
+        ),
+      start = dplyr::case_when(
+          strand == "+" ~ start,
+          strand == "-" ~ base::as.integer(end-1)
+        ),
+      score = "."
+    ) %>%
+  dplyr::arrange(chromosome_name,start) %>% 
+  dplyr::select(
+      chromosome_name, start, end,
+      ensembl_transcript_id, score, strand,
+      ensembl_gene_id, external_gene_name, gene_biotype
+    )
+```
+
+## [3.1.] Save modified, bed-formatted BDGP6.bm TSSs as rds
+```{r}
+base::saveRDS(
+    object = BDGP6.bm.mod,
+    file = base::paste0(
+        here::here("resources/"),
+        "BDGP6.bm.TssBiomart.ProteinCoding.bed",
+        ".rds"
+      ),
+    compress = TRUE
+  )
+```
+
+## [3.2.] Save modified BDGP6.bm TSSs as bed format
+```{r}
+utils::write.table(
+    x = BDGP6.bm.mod,
+    file = base::paste0(
+        here::here("resources/"),
+        "BDGP6.bm.TssBiomart.ProteinCoding",
+        ".bed"
+      ),
+    quote = FALSE,
+    sep = "\t",
+    row.names = FALSE,
+    col.names = FALSE
+  )
+```
