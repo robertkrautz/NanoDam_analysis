@@ -2973,7 +2973,7 @@ for(ext in base::c("pdf", "png")){
 ```
 
 ## [8.4.] TFs identified to be expressed in INPs according to scRNASeq
-#### see [2.7.] of 'Data_wrangling' in '20181211_workflow_peakAnno.Rmd'
+#### see [2.7.] of 'annotate_peaks.Rmd'
 ```{r}
 clus <- base::list()
 clus[[2]] <- base::c(

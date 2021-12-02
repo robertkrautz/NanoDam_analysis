@@ -357,7 +357,7 @@ base::print(plot)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results//"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_heatmap_binaryPeakAppearance_FDR", FDR,
           "_DichOgre",
@@ -400,7 +400,7 @@ UpSetR::upset(
 ## [3.5.] Save plot
 ```{r}
 outfile <- base::paste0(
-    here::here("results//"),
+    here::here("results/"),
     base::format(base::Sys.time(), "%Y%m%d"),
     "_UpSetR_binaryPeakAppearance_FDR", FDR,
     "_DicOgre.pdf"
@@ -511,7 +511,7 @@ agg <- purrr::map_dfr(
 base::saveRDS(
     object = agg,
     file = base::paste0(
-        here::here("data//"),
+        here::here("data/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_agg",
         "_FDR", FDR,
@@ -621,7 +621,7 @@ res <- foreach::foreach(i = 1:base::nrow(preAgg)) %dopar% {
 base::saveRDS(
     object = res,
     file = base::paste0(
-        here::here("data//"),
+        here::here("data/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_res",
         "_FDR", FDR,
@@ -708,7 +708,7 @@ resClus %>%
 base::saveRDS(
     object = resClus,
     file = base::paste0(
-        here::here("data//"),
+        here::here("data/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_resClus_DichaeteOnly_zscores",
         "_FDR", FDR,
@@ -721,7 +721,7 @@ base::saveRDS(
 ```{r}
 resClus <- base::readRDS(
   file = base::list.files(
-        here::here("data//"),
+        here::here("data/"),
         full.names = TRUE
       ) %>%
     stringr::str_subset('_resClus_')
@@ -743,7 +743,7 @@ factoextra::fviz_nbclust(
 ## [5.12.] Save plot
 ```{r}
 outfile <- base::paste0(
-    here::here("results//"),
+    here::here("results/"),
     base::format(base::Sys.time(), "%Y%m%d"),
     "_resClus",
     "_NrClusters",
@@ -784,7 +784,7 @@ clValid::summary(clusVal)
 base::saveRDS(
     object = clusVal,
     file = base::paste0(
-      here::here("data//"),
+      here::here("data/"),
       base::format(base::Sys.time(), "%Y%m%d"),
       "_clusVal",
       "_FDR", FDR,
@@ -917,7 +917,7 @@ runs <- foreach::foreach(i=1:base::nrow(options), .packages = "cluster") %dopar%
 base::saveRDS(
     object = runs,
     file = base::paste0(
-        here::here("data//"),
+        here::here("data/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_runs",
         "_FDR", FDR,
@@ -1012,7 +1012,7 @@ base::print(plot)
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results//"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_runs",
           "_FDR", FDR,
