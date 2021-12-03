@@ -94,13 +94,13 @@ def parse_args():
     parser.add_argument(
         "-n", "--quantile",
         type = str,
-        default = "/mnt/home1/brand/rk565/bin/quantile_norm_bedgraph.pl",
+        default = "./quantile_norm_bedgraph.pl",
         help = "Path to 'quantile_norm_bedgraph.pl'."
         )
     parser.add_argument(
         "-a", "--average",
         type = str,
-        default = "/mnt/home1/brand/rk565/bin/average_tracks.pl",
+        default = "./average_tracks.pl",
         help = "Path to 'average_tracks.pl'."
         )
     parser.add_argument(
