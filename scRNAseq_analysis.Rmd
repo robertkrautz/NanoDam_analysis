@@ -1083,8 +1083,6 @@ mergeTF <- base::readRDS(
   )
 ```
 
-##<<bookmark>>
-
 ## [3.1.] Test overlap 1
 #### Read out TFs of NanoDam k-means clusters
 ```{r}
@@ -1124,7 +1122,7 @@ grid::grid.draw(g1)
 for(ext in base::c("pdf", "png")){
   ggplot2::ggsave(
     filename = base::paste0(
-      here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+      here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxPlot",
           "_AG7AH7combined",
@@ -1321,7 +1319,7 @@ base::print(heatmap)
 for(ext in base::c("pdf", "png")){
   ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_heatMap",
           "_AG7AH7combined",
@@ -1433,7 +1431,7 @@ genes_clus6 <- base::c(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
           "_boxPlot",
           "_AG7AH7combined",
@@ -1450,183 +1448,6 @@ for(ext in base::c("pdf", "png")){
     )
   }
 ```
-
-##<<necessary?_start>>
-
-##--------------------------##
-##----Plot_SCENIC_scores----##
-##--------------------------##
-
-## [14.0.] Load SCENIC activity scores
-#### see '[11.6.2.]' in '20190730_workflow_SCENIC_AH7AG7comb.Rmd' 
-```{r}
-tSNE.sep <- readRDS(
-    file = base::list.files(
-        path = here("data/20190730_SCENIC_AH7AG7comb"),
-        full.names = TRUE
-      ) %>%
-      stringr::str_subset('scoresSCENIC')
-  )
-```
-
-## [14.1.] Merge & combine data
-```{r}
-scores_scenic <- tSNE.sep %>%
-  dplyr::select(-starts_with('tsne')) %>%
-  dplyr::left_join(
-    x = cells.tsne,
-    y = .,
-    by = base::c("cell")
-  )
-```
-
-## [14.2.] Helper function to plot scoresSCENIC
-```{r}
-plotting_scenic <- function(regOI, df = scores_scenic){
-  
-    ##Format_scoresSCENIC
-    ##-------------------
-    cols <- base::c(
-        grDevices::colorRampPalette(
-            base::c("#e7f0fa", "#c9e2f6", "#95cbee", "#0099dc", "#4ab04a", "#ffd73e")
-          )(50),
-        grDevices::colorRampPalette(
-            base::c("#eec73a", "#e29421", "#e29421", "#f05336","#ce472e"),
-            bias=2
-          )(50)
-        )
-    rangE <- df %>%
-      #dplyr::select(!!rlang::sym(regOI)) %>%
-      dplyr::select(-cell,-tSNE_1,-tSNE_2,-clus) %>% 
-      tidyr::drop_na() %>% 
-      base::range()
-    maxSc <- ifelse(
-        base::round(rangE[2],digits = 1) > rangE[2],
-        base::round(rangE[2],digits = 1),
-        base::round(rangE[2]+0.05,digits = 1)
-      )
-    ##Format_label
-    ##------------
-    anno <- df %>%
-      dplyr::summarise(
-          x_one = base::min(tSNE_1),
-          x_two = base::max(tSNE_1),
-          y_one = base::min(tSNE_2),
-          y_two = base::max(tSNE_2),
-          x_coor = x_one + (0.025*(base::abs(x_one) + base::abs(x_two))),
-          y_coor = y_two - (0.025*(base::abs(y_one) + base::abs(y_two)))
-        ) %>%
-      dplyr::select(x_coor,y_coor) %>%
-      base::unlist()
-    ##Format_data
-    ##-----------
-    df_plot <- df %>%
-      dplyr::arrange(
-        !!rlang::sym(regOI)
-      )
-  
-    plot <- ggplot2::ggplot(
-          data = df_plot,
-          mapping = aes(
-            x = tSNE_1,
-            y = tSNE_2,
-            colour = !!rlang::sym(regOI)
-          )
-        ) +
-      geom_point() +
-      annotate(
-          geom = "text",
-          label = regOI,
-          x = anno[1],
-          y = anno[2],
-          hjust = 0,
-          color = "black",
-          size = 4L,
-          fontface = 4
-        ) +
-      scale_colour_gradientn(
-          colours = cols,
-          limits = base::c(0,maxSc)
-        ) +
-      theme_bw() +
-      theme(
-          aspect.ratio = 1
-        ) +
-      guides(
-          colour = guide_colourbar(
-            label.position = "right",
-            title = NULL,
-            title.position = "left",
-            title.theme = element_text(
-              angle = 90,
-              hjust = 0.5
-            ),
-            ticks=T,
-            nbin=100,
-            barheight=10,
-            label=T,
-            barwidth=0.5
-          )
-        )
-    base::print(plot)
-    return(plot)
-  }
-```
-
-## [14.3.] Plot scoresSCENIC onto Seurat tSNE
-#### test: regOI = "scro_extended (108g)"
-```{r}
-regulonsOI <- scores_scenic %>%
-  dplyr::select(-cell,-tSNE_1,-tSNE_2,-clus) %>%
-  base::colnames()
-
-regulonsOI_plots <- tibble::tibble(
-      regulon = regulonsOI
-    ) %>%
-  dplyr::mutate(
-    plot = purrr::map(
-        .x = regulonsOI,
-        .f = plotting_scenic,
-        df = scores_scenic
-      )
-    )
-```
-
-## [14.4.] Save plots
-```{r}
-regulonsOI_plots <- regulonsOI_plots %>%
-  dplyr::mutate(
-    fileOut = purrr::pmap_chr(
-      .l =list(
-          regulon,
-          plot
-        ),
-      .f = function(r,p){
-        idOut = stringr::str_replace(r,'^(.*)\\s.*','\\1')
-        fnOut = base::paste0(
-            here::here("results/20190730_SCENIC_AH7AG7comb/"),
-            base::format(base::Sys.time(), "%Y%m%d"),
-            "_scatterPlot",
-            "_AG7AH7combined",
-            "_scoresSCENIC",
-            "_", idOut,
-            ".pdf"
-          )
-        ggplot2::ggsave(
-            filename = fnOut,
-            plot = p,
-            device = 'pdf',
-            dpi = 300,
-            width = 6,
-            height = 5
-          )
-        return(fnOut)
-      }
-    )    
-  )
-```
-
-##<<necessary?_start>>
 
 ##--------------------------------------##
 ##----Markers_individual_comparisons----##
@@ -1664,7 +1485,7 @@ clus3_vs_56_tfs <- clus3_vs_56 %>%
 utils::write.table(
     x = clus3_vs_56_edit,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clus3_vs_56",
         "_allGenes",
@@ -1709,7 +1530,7 @@ clus6_vs_35_tfs <- clus6_vs_35 %>%
 utils::write.table(
     x = clus6_vs_35_edit,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clus6_vs_35",
         "_allGenes",
@@ -1754,7 +1575,7 @@ clus5_vs_36_tfs <- clus5_vs_36 %>%
 utils::write.table(
     x = clus5_vs_36_edit,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clus5_vs_36",
         "_allGenes",
@@ -1791,7 +1612,7 @@ clus3_vs_all_edit <- clus3_vs_all %>%
 utils::write.table(
     x = clus3_vs_all_edit,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_clus3_vs_allOtherClusters",
         "_allGenes",
@@ -1808,89 +1629,6 @@ utils::write.table(
 ##-------------------------------##
 ##----Visualize_distributions----##
 ##-------------------------------##
-
-##<<unnecessary_start>>
-
-## [10.2.] Under the hood of ggplot2 graphics
-#### Note: ggplotGrob is a short version of ggplot_gtable(ggplot_build(x))
-```{r eval=FALSE, collapse=TRUE}
-gtable_select <- function(x,...){
-  matches <- base::c(...)
-  x$layout <- x$layout[matches, , drop=FALSE]
-  x$grobs <- x$grobs[matches]
-  return(x)
-}
-
-gtable_stack <- function(g1, g2){
-  g1$grobs <- base::c(g1$grobs, g2$grobs)
-  g1$layout <- transform(g1$layout, z= z-max(z), name="g2")
-  g1$layout <- rbind(g1$layout, g2$layout)
-  return(g1)
-}
-
-rect <- ggplot(
-    data = agg.data,
-    mapping = aes(
-      x = gene,
-      y = exp
-    )
-  ) +
-  coord_flip() +
-  facet_wrap(
-    cluster~.,
-    nrow = 1
-  ) +
-  geom_rect(
-    aes(
-      fill = cluster
-    ),
-    xmin = -Inf,
-    xmax = Inf,
-    ymin = -Inf,
-    ymax = Inf
-  ) +
-  scale_fill_manual(
-    limits = all_cluster,
-    breaks = all_cluster,
-    values = pal.use
-  )
-
-g2 <- ggplotGrob(rect)
-
-panels <- grepl(pattern = "panel", g2$layout$name)
-strips <- grepl(pattern = "strip-t", g2$layout$name)
-g2$layout$t[panels] <- g2$layout$t[panels]-1
-g2$layout$b[panels] <- g2$layout$b[panels]-1
-g2$layout <- g2$layout[panels|strips,]
-g2$grobs <- g2$grobs[panels|strips]
-grid.newpage()
-grid.draw(g2)
-
-base::attributes(g2$grobs[[62]])
-base::attributes(g2$grobs[[62]]$grobs[[1]])
-str(g2$grobs[[62]]$grobs[[1]]$children[[2]]$children[[1]]$label)
-str(g2$grobs[[64]]$grobs[[1]]$children[[2]]$children[[1]]$label)
-
-str(g2$grobs[[73]]$grobs[[1]])
-str(g2$grobs[[73]]$grobs[[1]]$children$GRID.titleGrob.43914$children)
-
-base::attributes(g2$grobs[[62]]$widths)
-g2$grobs[[62]]$widths[[1]]
-base::attributes(g2$grobs[[62]]$heights)
-g2$grobs[[62]]$heights$arg1
-base::attributes(g2$grobs[[62]]$layout)
-g2$grobs[[62]]$layout
-
-##gtable_select
-new_strips <- gtable_select(g2, panels)
-grid.newpage()
-grid.draw(new_strips)
-new_plot <- gtable_stack(g1, new_strips)
-grid.newpage()
-grid.draw(new_plot)
-```
-
-##<<unnecessary_end>>
 
 ## [5.0.] Apply reader() & plotter() to clusStats
 ```{r}
@@ -1912,7 +1650,7 @@ grid::grid.draw(g1)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot",
           "_clus", curClus,
@@ -1952,7 +1690,7 @@ grid::grid.draw(g1)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot",
           "_clusTF", clusCur,
@@ -1970,86 +1708,6 @@ for(ext in base::c("pdf", "png")){
 ##----------------------------------##
 ##----Plot_Transcription_factors----##
 ##----------------------------------##
-
-##<<unnecessary_start>>
-
-## [6.0.] Read in Bayrakter transcritpion factors
-```{r}
-tfs <- readr::read_delim(
-    file = here::here('data/20190117_Bayraktar_FlyBase_TFIDs.txt'),
-    col_names = base::c("FBgnID","name","symbol"),
-    col_types = "ccc",
-    delim = "\t",
-    quote = "",
-    skip = 1
-  )
-
-tfs.v1 <- tfs %>%
-  dplyr::pull(symbol)
-```
-
-## [6.1.] Apply reader() & plotter() on Bayrakter TFs
-```{r}
-agg.data <- .GlobalEnv$reader(inps,tfs.v1,FALSE)
-g1 <- .GlobalEnv$plotter(agg.data,pal)
-grid::grid.newpage()
-grid::grid.draw(g1)
-```
-
-## [6.2.] Save plot
-```{r}
-for(ext in base::c("pdf", "png")){
-    ggplot2::ggsave(
-      filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
-          "20190125_boxplot_BayraktarTFs_preimputation.",
-          ext
-        ),
-      plot = g1,
-      device = ext,
-      dpi = 300,
-      width = 6,
-      height = 4
-    )
-  }
-```
-
-## [6.3.] Imputation of values for tfs
-```{r}
-inps <- Seurat::AddImputedScore(
-    object = inps,
-    genes.fit = tfs.v1,
-    do.print = TRUE
-  )
-```
-
-## [6.4.] Apply reader() & plotter() on Bayrakter TFs
-```{r}
-agg.data <- .GloalEnv$reader(inps,tfs.v1,FALSE)
-g2 <- .GloalEnv$plotter(agg.data,pal)
-grid::grid.newpage()
-grid::grid.draw(g2)
-```
-
-## [6.5.] Save plot
-```{r}
-for(ext in base::c("pdf", "png")){
-    ggplot2::ggsave(
-      filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
-          "20190125_boxplot_BayraktarTFs_postimputation.",
-          ext
-        ),
-      plot = g2,
-      device = ext,
-      dpi = 300,
-      width = 6,
-      height = 4
-    )
-  }
-```
-
-##<<unnecessary_end>>
 
 ## [6.0.] Identify TFs separate for specific INP cluster
 ```{r}
@@ -2078,7 +1736,7 @@ grid::grid.draw(g)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot",
           "_separatingTFs",
@@ -2116,7 +1774,7 @@ grid::grid.draw(g)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot",
           "_separatingTFs",
@@ -2137,7 +1795,7 @@ for(ext in base::c("pdf", "png")){
 base::saveRDS(
     object = inps,
     file = base::paste0(
-        here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        here::here("results/"),
         base::format(base::Sys.time(), "%Y%m%d"),
         "_inps",
         "_combinedDataset_AH7AG7",
@@ -2147,109 +1805,16 @@ base::saveRDS(
   )
 ```
 
-#### "20190121_inps_combinedDataset_AH7AG7.rds"
 ```{r}
 inps <- base::readRDS(
   file = base::list.files(
-        path = here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+        path = here::here("results/"),
         full.names = TRUE
       ) %>%
     stringr::str_subset("rds") %>%
     stringr::str_subset("AH7AG7")
   )
 ```
-
-##<<unnecessary_start>>
-
-## [10.4.] Visualize the expression distribution of the selected genes in their clusters
-#### Note: __Deprecated__
-```{r fig.height=3,fig.width=2}
-Seurat::FeaturePlot(
-    object = inps,
-    features.plot = tf,
-    min.cutoff = "q9",
-    cols.use = base::c("grey80", "red"),
-    pt.size = 0.5,
-    no.axes = TRUE
-  )
-```
-
-##------------------##
-##----Deprecated----##
-##------------------##
-
-## [10.1.] Helper function to visualize the expression distribution of the selected genes in their clusters
-```{r eval=FALSE}
-plotter <- function(df){
-  
-  plot <- ggplot2::ggplot(
-        data = df,
-        mapping = aes(
-          x = gene,
-          y = exp,
-          colour = cluster
-        )
-      ) +
-    coord_flip() +
-    facet_wrap(
-        facets  = cluster ~.,
-        nrow = 1
-      ) +
-    geom_boxplot(
-        outlier.shape = NA,
-        outlier.size = NA
-      ) +
-    #geom_violin() +
-    theme_bw() +
-    theme(
-        legend.position = "none"
-      )
-    
-    return(plot)
-  }
-```
-
-## [10.8.] Apply reader() & plotter() to tf with imputed values
-#### Note: list derived from Bayrakter, O.A. & Doe, C., 2013
-```{r fig.width=4,fig.heigth=4}
-agg.data <- .GlobalEnv$reader(inps,tf,TRUE)
-agg.plot <- .GlobalEnv$plotter(agg.data)
-base::print(agg.plot)
-```
-
-## [10.9.] Imputation of values for tfs
-```{r}
-inps <- Seurat::AddImputedScore(
-    object = inps,
-    genes.fit = geneset,
-    do.print = TRUE
-  )
-```
-
-## [10.10.] Apply reader() & plotter() to tf with imputed values
-#### Note: marker list from geneset
-```{r fig.height=4,fig.width=4}
-geneset <- base::c(
-    "dpn", "mira", "ase",
-    "pros", "erm", "btd", "lola",
-    "hth", "exd", "tll",
-    "D", "ey", "grh",
-    "repo", "Cyp4g15", "moody",
-    "nSyb", "elav", "Fas2"
-  )
-
-geneset <- base::c("D", "ey", "grh")
-
-agg.data <- .GlobalEnv$reader(inps,geneset,FALSE)
-agg.plot <- .GlobalEnv$plotter(agg.data)
-base::print(agg.plot)
-```
-
-##-------------------------##
-##----End_of_Deprecated----##
-##-------------------------##
-
-##<<unnecessary_end>>
 
 ## [7.0.] Application of preper() & plotOnTsne() helper functions
 ```{r}
@@ -2309,7 +1874,7 @@ tfs_plot <- tfs_plot %>%
         ),
       .f = function(t,p){
         fnOut = base::paste0(
-            here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+            here::here("results/"),
             base::format(base::Sys.time(), "%Y%m%d"),
             "_scatterPlot",
             "_AG7AH7combined",
@@ -2384,7 +1949,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-            here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+            here::here("results/"),
             base::format(base::Sys.time(), "%Y%m%d"),
             "_expressionTSNE",
             "_TFmarker",
@@ -2449,7 +2014,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_TFmarker",
@@ -2523,7 +2088,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggploot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_TFmarker",
@@ -2596,7 +2161,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_TFmarker",
@@ -2662,7 +2227,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_TFmarker",
@@ -2730,7 +2295,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_TFmarker",
@@ -2752,11 +2317,11 @@ for(ext in base::c("pdf", "png")){
 ##---------------------------##
 
 ## [8.0.] Load sortTF
-#### see [2.6.] of 'Data_wrangling' in '20181211_workflow_peakAnno.Rmd'
+#### see [2.6.], [2.8.] 'annotate_peaks.Rmd'
 ```{r}
 sortTF <- base::readRDS(
   file = base::list.files(
-        here::here("data/20180515_NanoDam_DichaeteOgre_GrhEyD_tracks"),
+        here::here("data"),
         full.names = TRUE
       ) %>%
     stringr::str_subset("sortTF") %>%
@@ -2794,7 +2359,7 @@ grid::grid.draw(g)
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot",
           "_geneTF",
@@ -2885,7 +2450,7 @@ grid.draw(g)
 for(ext in base::c("pdf", "png")){
     ggploot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_boxplot_subsetTF_clus", clusCur,
           ".", ext
@@ -3028,7 +2593,7 @@ cowplot::plot_grid(
 for(ext in base::c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20190110_CellRanger_scRNASeq_NanoDam/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_expressionTSNE",
           "_inpClus",
@@ -3112,4 +2677,3 @@ expr.eStage <- dplyr::left_join(
     by = base::c("gene", "cluster")
   )
 ```
-
