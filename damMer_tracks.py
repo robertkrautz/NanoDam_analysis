@@ -89,7 +89,7 @@ def parse_args():
         "-m", "--macs2",
         type = str,
         default = "/usr/bin/macs2",
-        help = "Path to 'macs2'."
+        help = "Path to 'MACS2'."
         )
     parser.add_argument(
         "-n", "--quantile",
@@ -106,7 +106,7 @@ def parse_args():
     parser.add_argument(
         "-b", "--bgToBw",
         type = str,
-        default = "/mnt/home1/brand/rk565/bin/bedGraphToBigWig",
+        default = "/usr/bin/bedGraphToBigWig",
         help = "Path to 'bedGraphToBigWig'."
     )
 
