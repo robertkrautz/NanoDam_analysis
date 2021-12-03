@@ -1,5 +1,5 @@
 ---
-title: "20210827_workflow_correlations"
+title: "genomewide_correlation"
 output: html_document
 ---
 
@@ -22,33 +22,11 @@ doParallel::registerDoParallel(
   )
 ```
 
-##<<necessary?_start>>
-
-## [0.1.] Save & load RData-image
-```{r}
-base::save.image(
-    file = base::paste0(
-        here::here("data/"),
-        "20210827_correlations.RData"
-      ),
-    compress = TRUE
-  )
-```
-
-```{r}
-base::load(
-  file = base::paste0(
-      here::here("data/"),
-      "20210827_correlations.RData"
-    )
-  )
-```
-
 ##---------------------##
 ##----Prerequisites----##
 ##---------------------##
 
-## [0.2.] Load colour palette
+## [0.1.] Load colour palette
 ```{r}
 pal <- base::c(
     "#3255A4", "#A4DBE8", "#8C8279",
@@ -60,12 +38,12 @@ pal <- base::c(
   )
 ```
 
-## [0.3.] Define selected chromosomes
+## [0.2.] Define selected chromosomes
 ```{r}
 selected_chr <- base::c("2L","2R","3L","3R","4","X","Y")
 ```
 
-## [0.4.] Read in dm6.chrom.sizes file & subset
+## [0.3.] Read in dm6.chrom.sizes file & subset
 #### see 'https://www.encodeproject.org/files/dm6.chrom.sizes/'
 #### chromosome names do not include 'chr'-prefixes in 'dm6.chrom.sizes.mod'
 ```{r}
@@ -84,7 +62,7 @@ metainfo <- readr::read_delim(
   dplyr::arrange(chr)
 ```
 
-## [0.5.] str_ignore() helper function
+## [0.4.] str_ignore() helper function
 ```{r}
 str_ignore <- function(vec,pattern){
   return(
@@ -114,9 +92,6 @@ fns <- purrr::map(
     ) %>%
   base::unlist() %>% 
   stringr::str_subset("bin500.ext150.bgr")
-  ##<<necessary?_start>> %>%
-  #.GlobalEnv$str_ignore("trimmed")
-  ##<<necessary?_end>>
 ```
 
 ## [1.1.] Read out info from filenames
@@ -192,21 +167,9 @@ correlator <- function(col1, col2, df = combined_wide, method = "spearman"){
   return(
     df %>%
       dplyr::select(
-        1:3,
-        tidyselect::all_of(col1),
-        tidyselect::all_of(col2)
-        # dplyr::matches(
-        #     col1 %>%
-        #       base::unlist() %>%
-        #       base::unname() %>%
-        #       base::as.character()
-        #     ),
-        # dplyr::matches(
-        #     col2 %>%
-        #       base::unlist() %>%
-        #       base::unname() %>%
-        #       base::as.character()
-        #     )
+          1:3,
+          tidyselect::all_of(col1),
+          tidyselect::all_of(col2)
         ) %>%
       purrr::when(
         col1 == col2
@@ -393,36 +356,6 @@ outfile %>%
 ##----Read_data----##
 ##-----------------##
 
-##<<necessary?_start>>
-
-## [3.0.] Read in datasets across all samples & perform arithmetics()
-#### __Deprecated__ due to long runtime
-```{r eval=FALSE}
-arits <- files %>%
-    dplyr::mutate(
-      data = purrr::map(
-          .x = path,
-          .f = readr::read_delim,
-          delim = "\t",
-          skip = 0,
-          col_names = base::c("chr","start","end","score"),
-          col_types = readr::cols(
-            .default = readr::col_integer(),
-            chr = readr::col_character()
-          )
-        ),
-      arit = purrr::map(
-          .x = data,
-          .f = .GlobalEnv$arithmetrics,
-          selected_chr = selected_chr
-        )
-    ) %>%
-  dplyr::select(-path) %>%
-  tidyr::unnest(cols = data)
-```
-
-##<<necessary?_end>>
-
 ## [3.0.] Read in datasets all samples separately
 #### Evaluate with 'dplyr::mutate(data,rws = purrr::map_int(data,nrow))'
 ```{r}
@@ -586,12 +519,11 @@ base::print(plot_corrs)
 ```
 
 ## [3.6.] Save contingency table
-#### previous: "20210203_correlation_Notch", "_trimSortBin500Ext150Trim",
 ```{r}
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210907_correlations/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_scattermatrix",
           "_genomewide",
@@ -614,7 +546,6 @@ for(ext in c("pdf", "png")){
 ##----------------------##
 
 ## [4.0.] Helper function to calculate numbers for Fingerprint plot
-#### code chunk added 20211116
 ```{r}
 fingerPrep <- function(df, sample){
     cumSum <- df %>%
@@ -705,7 +636,7 @@ ggplot2::ggplot(
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210907_correlations/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_fingerprintPlot",
           "_genomewide",
@@ -727,9 +658,9 @@ for(ext in c("pdf", "png")){
 ##-------------------##
 
 ## [5.0.] Build list with all variations of the compared samples
-#### Note: 'Variations' are to be understood in terms of combinatorics
-#### Note: To fill the confidence matrix with all 16x16 (=256) options (i.e., incl trim samples), 'repetitions' are allowed
-#### Note: "combin <- combn(samples, 2) %>% t"
+#### 'Variations' are to be understood in terms of combinatorics
+#### To fill the confidence matrix with all 16x16 (=256) options (i.e., incl trim samples), 'repetitions' are allowed
+#### "combin <- combn(samples, 2) %>% t"
 ```{r}
 combin <- base::expand.grid(samples, samples) %>%
   tibble::as_tibble() %>% 
@@ -770,25 +701,6 @@ all_corr_pcc_plot <- all_corr_pcc %>%
   ) %>%
   dplyr::arrange(sam_1,sam_2)
 ```
-
-##<<necessary?_start>>
-
-#### sam_1 = col1 = "Dam_nanodam_S3_R1_001_trimmed", sam_2 = col2 = "dCTIP_tada_S7_R1_001"
-```{r}
-all_corr_pcc %>% 
-  dplyr::filter(
-      (
-        sam_1 == "Dam_nanodam_S3_R1_001_trimmed" &
-        sam_2 == "dCTIP_tada_S7_R1_001"
-      ) |
-      (
-        sam_1 == "dCTIP_tada_S7_R1_001" &
-        sam_2 == "Dam_nanodam_S3_R1_001_trimmed"
-      )
-    )
-```
-
-##<<necessary?_end>>
 
 ## [5.2.] Plot all correlations in contingency table
 ```{r}
@@ -863,15 +775,12 @@ corr_plot <- ggplot2::ggplot(
 base::print(corr_plot)
 ```
 
-## [4.3.] Save contingency table
-##<<necessary?_start>>
-#### previous: "20210203_correlation_Notch", "_trimSortBin500Ext150Trim",
-##<<necessary?_end>>
+## [5.3.] Save contingency table
 ```{r}
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210907_correlations/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_correlation",
           "_genomewide",
@@ -894,8 +803,8 @@ for(ext in c("pdf", "png")){
 ##----Bedgraph_based----##
 ##----------------------##
 
-## [5.0.] Identify bedgraph files
-#### 8 files: "Cph_NanoDam_1_vs_Dam_NanoDam_1.bgr"; "Cph_TaDa_1_vs_Dam_TaDa_1.bgr" etc.
+## [6.0.] Identify bedgraph files
+#### 8 files: "Cph_NanoDam_1_vs_Dam_NanoDam_1.bedgraph"; "Cph_TaDa_1_vs_Dam_TaDa_1.bedgraph" etc.
 ```{r}
 dirs_bgrs <- base::list.dirs(
       path = here::here("data"),
@@ -912,27 +821,25 @@ fns_ <- purrr::map(
       full.names = TRUE
     ) %>%
   base::unlist() %>% 
-  stringr::str_subset("gatc.bedgraph$")
-  #stringr::str_subset("bedgraph.quant.norm.bedgraph")
+  stringr::str_subset(".bedgraph$") %>%
+  stringr::str_subset("_vs_")
 ```
 
-####  add controls manually
-#### 2 files: "Dam_TaDa_2_vs_Dam_TaDa_1.bgr", "Dam_TaDa_2_vs_Dam_TaDa_1.bgr"
+#### add controls manually
+#### 2 files: "Dam_NanoDam_2_vs_Dam_NanoDam_1.bedgraph", "Dam_TaDa_2_vs_Dam_TaDa_1.bedgraph"
 ```{r}
 ctrl_nano <- base::paste0(
     here::here("data/"),
-    "20211117_cph_nanodam_DamVsDam/cph_nanodam_DamVsDam_tracks/",
-    "Exp_nanodam_S3-vs-Dam_nanodam_ctrl_S10.gatc.bedgraph"
+    "Dam_NanoDam_2_vs_Dam_NanoDam_1.bedgraph"
   )
 ctrl_tada <- base::paste0(
     here::here("data/"),
-    "20211117_cph_tada_DamVsDam/cph_tada_DamVsDam_tracks/",
-    "Exp_tada_S9-vs-Dam_tada_ctrl_S8.gatc.bedgraph"
+    "Dam_TaDa_2_vs_Dam_TaDa_1.bedgraph"
   )
 fns <- base::c(fns_,ctrl_nano,ctrl_tada)
 ```
 
-## [5.1.] Read out info from filenames
+## [6.1.] Read out info from filenames
 ```{r}
 files <- tibble::tibble(
       path = fns
@@ -941,7 +848,7 @@ files <- tibble::tibble(
     file = base::basename(path),
     sample = stringr::str_replace(
         string = file,
-        pattern = "^(.*?)\\.gatc.*",
+        pattern = "^(.*?)\\..*",
         replacement = "\\1"
       )
     ) %>%
@@ -950,7 +857,7 @@ files <- tibble::tibble(
     )
 ```
 
-## [5.2.] Read in datasets all samples separately
+## [6.2.] Read in datasets all samples separately
 #### Evaluate with 'dplyr::mutate(data,rws = purrr::map_int(data,nrow))'
 ```{r}
 data <- files %>%
@@ -986,7 +893,7 @@ data_wide <- data %>%
     )
 ```
 
-## [5.3.] Quantile normalize all samples
+## [6.3.] Quantile normalize all samples
 ```{r}
 dims <- base::dim(data_wide)
 data_qn__ <- data_wide %>%
@@ -1008,10 +915,8 @@ data_qn <- dplyr::bind_cols(
   )
 ```
 
-## [6.0.] Build list with all variations of the compared samples
-#### Note: 'Variations' are to be understood in terms of combinatorics
-#### Note: To fill the confidence matrix with all 16x16 (=256) options, 'repetitions' are allowed
-#### Note: "combin <- combn(samples, 2) %>% t"
+## [7.0.] Build list with all variations of the compared samples
+#### "combin <- combn(samples, 2) %>% t"
 ```{r}
 combin <- base::expand.grid(files$sample, files$sample) %>%
   tibble::as_tibble() %>% 
@@ -1021,7 +926,7 @@ combin <- base::expand.grid(files$sample, files$sample) %>%
     )
 ```
 
-## [6.1.] Run correlator() on all variations with repetition
+## [7.1.] Run correlator() on all variations with repetition
 ```{r}
 all_corr_pcc <- combin %>%
   dplyr::mutate(
@@ -1053,7 +958,7 @@ all_corr_pcc_plot <- all_corr_pcc %>%
   dplyr::arrange(sam_1,sam_2)
 ```
 
-## [6.2.] Plot all correlations in contingency table
+## [7.2.] Plot all correlations in contingency table
 ```{r}
 cols <- grDevices::colorRampPalette(
     base::rev(RColorBrewer::brewer.pal(11,"RdBu"))
@@ -1126,12 +1031,12 @@ corr_plot <- ggplot2::ggplot(
 base::print(corr_plot)
 ```
 
-## [6.3.] Save contingency table
+## [7.3.] Save contingency table
 ```{r}
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210907_correlations/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_correlation",
           "_GATCbedgraph",
