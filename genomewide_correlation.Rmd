@@ -1,5 +1,6 @@
 ---
 title: "genomewide_correlation"
+author: "R_Krautz"
 output: html_document
 ---
 

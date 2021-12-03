@@ -1,6 +1,7 @@
 ---
-title: "20210908_workflow_peakEnrichment"
-output: ''
+title: "signal_enrichment"
+author: "R_Krautz"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -22,30 +23,6 @@ doParallel::registerDoParallel(
   )
 ```
 
-##<<necessary?_start>>
-
-## [0.1.] Save & load RData-image
-```{r eval=FALSE}
-base::save.image(
-    file = base::paste0(
-        here::here("data/"),
-        "20210908_peakEnrichment.RData"
-      ),
-    compress = TRUE
-  )
-```
-
-```{r}
-base::load(
-  file = base::paste0(
-      here::here("data/"),
-      "20210908_peakEnrichment.RData"
-    )
-  )
-```
-
-##<<necessary?_end>>
-
 ## [0.1.] Prerequisites
 ```{r}
 sel_chrom = base::c("2L","2R","3L","3R","4","X","Y")
@@ -63,8 +40,6 @@ str_ignore <- function(vec,pattern){
 ##-----------------##
 ##----Functions----##
 ##-----------------##
-
-#### see '20190314_workflow_notchClustering.Rmd' in '20180711_MouseCortex/'
 
 ## [1.0.] filer() function to identify files of interest
 ```{r}
@@ -183,7 +158,6 @@ merger <- function(df, chosenEngine="bedtools"){
 ```
 
 ## [1.3.] Helper function extract_matrix()
-#### see [6.0.] in '20180711_MouseCortex/src/20180718_workflow_heatmaps'
 ```{r}
 extract_matrix <- function(track, regions, size) {
   sum <- base::suppressWarnings(
@@ -217,10 +191,7 @@ FDR = 5L
 
 fns <- purrr::map_chr(
     .x = base::c(
-        # here::here("data/20211117_cph_tada_DamVsDam/cph_tada_DamVsDam_peaks"),
-        # here::here("data/20211117_cph_nanodam_DamVsDam/cph_nanodam_DamVsDam_peaks"),
-        here::here("data/20210825_cph_nanodam/cph_nanodam_peaks"),
-        here::here("data/20210825_cph_tada/cph_tada_peaks")
+        here::here("data/")
       ),
     .f = .GlobalEnv$filer,
     fdr = FDR
@@ -266,8 +237,8 @@ peaks_tada <- preSub %>%
 ```
 
 ## [2.3.] Center & edit peaks
-#### see [6.7.] in '20180711_MouseCortex/src/20180718_workflow_heatmaps.Rmd'
 #### conversion for 'peaks', 'peaks_tada', 'peaks_nano'
+#### exchange 'peaks' with 'peaks_tada', 'peaks_nano'
 ```{r}
 xmin = xmax = 2500L
 peaks_gr <- GenomicRanges::GRanges(peaks)
@@ -295,44 +266,17 @@ steps <- base::seq(-xmin, xmax, by = base::as.numeric(bin))
 ##--------------##
 
 ## [3.0.] Identify bigwig files
-#### previous 'here::here("data/20210908_cph_NanodamTada_avgs")' with 'stringr::str_subset("average.bedgraph.quant.norm.bw")'
-#### previous 'here::here("data/20210908_cph_NanodamTada_all")'
 #### files: "Cph_NanoDam_1_vs_Dam_NanoDam_1.bw"; "Cph_TaDa_1_vs_Dam_TaDa_1.bw"; "Dam_TaDa_2_vs_Dam_TaDa_1.bw"
 ```{r}
 tracks_ <- base::list.files(
       path = base::paste0(
-          here::here("data/20211118_cph_NanodamTada_all")
+          here::here("data/")
         ),
       full.names = TRUE
     ) %>%
   stringr::str_subset("-vs-") %>%
-  stringr::str_subset("bedgraph.quant.norm.bw")
+  stringr::str_subset("bw")
 ```
-
-##<<necessary?_start>>
-
-```{r}
-tracknames <- purrr::map_chr(
-    .x = tracks_,
-    .f = function(t){
-      base::paste0(
-        stringr::str_replace(
-            string = base::basename(t),
-            pattern = "^dCTIP_(.*?)_R1.*", #"^(.*)-vs-.*$",
-            replacement = "\\1"
-          ),
-        "-vs-",
-        stringr::str_replace(
-            string = base::basename(t),
-            pattern = "^.*-vs-Dam_(.*)_R.*", #"^(.*)-vs-.*$",
-            replacement = "\\1"
-          )
-      )
-    }
-  )
-```
-
-##<<necessary?_end>>
 
 ```{r}
 tracknames <- purrr::map_chr(
@@ -480,7 +424,7 @@ ggplot2::ggplot(
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210913_peakEnrichment/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_enrichment",
           "_GATCbedgraph",
@@ -505,28 +449,6 @@ for(ext in c("pdf", "png")){
 ##------------------------------##
 
 ## [4.0.] Identify peak files
-
-##<<necessary?_start>>
-
-```{r}
-# fns_avg <- base::list.files(
-#     path = here::here("data/20210908_cph_NanodamTada_avgs"),
-#     full.names = TRUE
-#   ) %>%
-#   stringr::str_subset("broadPeak")
-```
-
-#### individual NanoDam replicates
-```{r}
-# fns <- base::list.files(
-#       path = here::here("data/20210825_cph_nanodam/cph_nanodam_peaks"),
-#       full.names = TRUE
-#     ) %>%
-#   stringr::str_subset("broadPeak")
-```
-
-##<<necessary?_end>>
-
 #### individual replicates for NanoDam & TaDa
 #### files: "Cph_NanoDam_1_vs_Dam_NanoDam_2.broadPeak"; "Cph_TaDa_1_vs_Dam_TaDa_1.broadPeak"; "Dam_NanoDam_2_vs_Dam_NanoDam_1.broadPeak"
 ```{r}
@@ -537,18 +459,15 @@ fns_ <- base::list.files(
     ) %>%
   stringr::str_subset("broadPeak") %>%
   .GlobalEnv$str_ignore("DamOnly") %>%
-  .GlobalEnv$str_ignore("merge") %>%
-  .GlobalEnv$str_ignore("DamVsDam") 
+  .GlobalEnv$str_ignore("merge")
 
 ctrl_nano <- base::paste0(
     here::here("data/"),
-    "20211117_cph_nanodam_DamVsDam/cph_nanodam_DamVsDam_peaks/",
-    "Exp_nanodam_S3-vs-Dam_nanodam_ctrl_S10_peaks.broadPeak"
+    "Dam_NanoDam_2_vs_Dam_NanoDam_1.broadPeak"
   )
 ctrl_tada <- base::paste0(
     here::here("data/"),
-    "20211117_cph_tada_DamVsDam/cph_tada_DamVsDam_peaks/",
-    "Exp_tada_S9-vs-Dam_tada_ctrl_S8_peaks.broadPeak"
+    "Dam_TaDa_2_vs_Dam_TaDa_1.broadPeak"
   )
 
 fns <- base::c(fns_,ctrl_nano,ctrl_tada)
@@ -582,40 +501,6 @@ reader <- function(f){
     )
   }
 ```
-
-##<<necessary?_start>>
-
-## [4.2.] Read in & prepare fg & bg
-#### subset fg for locations of overlapping peaks: 'fg_presBg <- fg[overlap@from,]'
-```{r}
-# bg_avg <- .GlobalEnv$reader(f = fns_avg[[1]]) %>% #fns_avg[[2]]
-#   dplyr::filter(qValue >= (-1)*log10(0.05)) %>%
-#   dplyr::arrange(dplyr::desc(qValue)) %>% 
-#   dplyr::mutate(
-#       rank = dplyr::row_number()
-#     ) %>%
-#   dplyr::select(chr,start,end,rank) %>%
-#   GenomicRanges::GRanges()
-# 
-# 
-# fg_avg <- .GlobalEnv$reader(f = fns_avg[[2]]) %>% #fns_avg[[1]]
-#   dplyr::filter(qValue >= (-1)*log10(0.05)) %>%
-#   dplyr::arrange(dplyr::desc(qValue)) %>% 
-#   dplyr::mutate(
-#       rank = dplyr::row_number()
-#     ) %>%
-#   dplyr::select(chr,start,end,rank) %>%
-#   GenomicRanges::GRanges()
-# 
-# overlap_avg <- GenomicRanges::findOverlaps(
-#     query = fg_avg,
-#     subject = bg_avg,
-#     maxgap = -1
-#   )
-# not_fg_avg <- base::length(fg_avg)-base::length(overlap)
-```
-
-##<<necessary?_end>>
 
 #### bg: fns[[1]] / fg: fns[2:8] ('dCTIP_nanodam_S7_R1_001-vs-Dam_nanodam_S10_R1_001_peaks')
 #### bg: fns[[5]] / fg: fns[base::c(1:4,6:8)] ('dCTIP_tada_S7_R1_001-vs-Dam_tada_S8_R1_001_peaks')
@@ -670,39 +555,12 @@ overlap <- purrr::map(
 base::names(overlap) <- fg_nrs
 ```
 
-## [4.3.] Calculate precision, recall (sensitivity), reverse specificity
-
-##<<necessary?_start>>
-#### evaluate with 'dplyr::distinct(prc_roc_plot_avg,name)'
-```{r}
-#name = "dCTIP_nanodam_merge_vs_dCTIP_tada_merge"
-# name = "dCTIP_tada_merge_vs_dCTIP_nanodam_merge"
-# 
-# prc_roc_plot_avg <- fg_avg %>%
-#   tibble::as_tibble() %>% 
-#   dplyr::mutate(
-#     pres = purrr::map_lgl(
-#         .x = rank,
-#         .f = function(l){
-#           l %in% overlap_avg@from
-#         }
-#       ),
-#       pres_nr = base::cumsum(pres),
-#       nonpres_nr = base::cumsum(!pres),
-#       prec = (pres_nr/(pres_nr + nonpres_nr)),
-#       recall = pres_nr/base::length(bg),
-#       rev_spec = nonpres_nr/not_fg_avg,
-#       name = name
-#     )
-```
-
-##<<necessary?_end>>
-
+## [4.2.] Calculate precision, recall (sensitivity), reverse specificity
 #### individual NanoDam replicates: '.x = 1:3' / 'n <- base::basename(fns[id+1])'
 #### all individual files: '.x = 1:7' / 'n <- base::basename(fns[id+1])'
 #### evaluate with 'prc_roc_plot_ %>% dplyr::group_by(name) %>% dplyr::slice_tail(n=10)'
 ```{r}
-prc_roc_plot_ <- purrr::map_dfr(
+prc_roc_plot <- purrr::map_dfr(
   .x = fg_nrs,
   .f = function(id){
     n <- base::basename(fns[id]) %>%
@@ -711,10 +569,6 @@ prc_roc_plot_ <- purrr::map_dfr(
           pattern = "^(.*)_peaks.*",
           replacement = "\\1"
         )
-    ##<<necessary?_start>>
-    # not_fg <- base::length(fg[[base::as.character(id)]]) -
-    #   base::length(overlap[[base::as.character(id)]])
-    ##<<necessary?_end>>
     not_fg <- GenomicRanges::mcols(
         fg[[base::as.character(id)]][
             !(GenomicRanges::mcols(fg[[base::as.character(id)]])[,"rank"] %in%
@@ -745,9 +599,9 @@ prc_roc_plot_ <- purrr::map_dfr(
   )
 ```
 
-#### Evaluation
+## [4.3.] Evaluation
 ```{r}
-prc_roc_plot_ %>%
+prc_roc_plot %>%
   dplyr::group_by(name) %>%
   dplyr::slice_tail(n=10)
 
@@ -755,34 +609,7 @@ overlap[["2"]]@from %>% unique %>% length
 overlap[["2"]]@to %>% unique %>% length
 ```
 
-## [4.4.] Combine datasets & derive condition column
-#### evaluate with 'dplyr::group_by(cond) %>% dplyr::summarise(n = dplyr::n())'
-```{r}
-##<<necessary?_start>>
-# prc_roc_plot <- dplyr::bind_rows(
-#       prc_roc_plot_,
-#       prc_roc_plot_avg
-#     ) %>%
-#   dplyr::mutate(
-#       cond = stringr::str_replace(
-#           string = name,
-#           pattern = "^.*?_(.*?)_.*",
-#           replacement = "\\1"
-#         ),
-#       cond = dplyr::case_when(
-#           stringr::str_detect(name,"merge") ~ "average",
-#           TRUE ~ cond 
-#         )
-#     )
-##<<necessary?_end>>
-prc_roc_plot <- prc_roc_plot_
-
-lim <- prc_roc_plot_ %>%
-  dplyr::distinct(name) %>%
-  dplyr::pull(name)
-```
-
-## [4.5.] aucROC & aucPRC
+## [4.4.] aucROC & aucPRC
 ```{r eval=FALSE}
 x = prc_roc_plot$rev_spec
 y = prc_roc_plot$recall
@@ -825,7 +652,7 @@ aucPRC <- 0.5 * base::sum(
   )
 ```
 
-## [4.6.] Plot PRC
+## [4.5.] Plot PRC
 ```{r}
 plot_prrec <- ggplot2::ggplot(
     data = prc_roc_plot,
@@ -850,7 +677,7 @@ plot_prrec <- ggplot2::ggplot(
 base::print(plot_prrec)
 ```
 
-## [4.7.] Print plot
+## [4.6.] Print plot
 ```{r}
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
@@ -869,8 +696,12 @@ for(ext in c("pdf", "png")){
   }
 ```
 
-## [4.8.] Plot ROC
+## [4.7.] Plot ROC
 ```{r}
+lim <- prc_roc_plot_ %>%
+  dplyr::distinct(name) %>%
+  dplyr::pull(name)
+
 plot_roc <- ggplot2::ggplot(
       data = prc_roc_plot,
       mapping = aes(
@@ -904,13 +735,13 @@ plot_roc <- ggplot2::ggplot(
 base::print(plot_roc)
 ```
 
-## [4.9.] Print plot
+## [4.8.] Print plot
 #### refs: "dCTIPTadaS7DamTadaS8", "dCTIPNanoS7DamNanoS10",
 ```{r}
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0( 
-          here::here("results/20210913_peakEnrichment/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_precisionRecall",
           "_NanoVsAll",
@@ -1038,7 +869,7 @@ ggplot2::ggplot(
 for(ext in c("pdf", "png")){
     ggplot2::ggsave(
       filename = base::paste0(
-          here::here("results/20210913_peakEnrichment/"),
+          here::here("results/"),
           base::format(base::Sys.time(), "%Y%m%d"),
           "_complexity",
           "_AllBamWoMerge",
