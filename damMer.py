@@ -98,13 +98,13 @@ def parse_args():
     parser.add_argument(
         "-s", "--samdir",
         type = str,
-        default = "/usr/bin/samtools_mt",
+        default = "usr/bin/samtools",
         help = "Path to samtools_mt executables."
         )
     parser.add_argument(
         "-q", "--damidseq",
         type = str,
-        default = "/mnt/home1/brand/rk565/bin/damidseq_pipeline_vR.1",
+        default = "./damidseq_pipeline_vR.1.pl",
         help = "Path to damidseq_pipeline executable."
         )
 
@@ -435,7 +435,7 @@ def main():
     ##--------------------------------
     '''In absence of specified 'defaults', 'index' needs to be provided.'''
     if args.index == None:
-        inDir = "/mnt/home1/brand/rk565/resources"
+        inDir = "resources"
         if args.defaults == "dm6":
             args.index = '/'.join(
                 [inDir,"bowtie2_BDGP6.ensembl/Ensembl_BDGP6_genome"]
