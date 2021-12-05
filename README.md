@@ -8,7 +8,7 @@ doi: [https://doi.org/10.1101/2021.06.07.447332](https://doi.org/10.1101/2021.06
 
 ## Running damMer
 
-The suite of damMer python3 scripts automates the application of the damidseq_pipeline across a multitude of TaDa- or NanoDam-samples by performing all pairwise comparisons between (1.) one 'Dam-fusion'- (TaDa) or one 'NanoDam-tagged protein'-sample (NanoDam) and (2.) one 'Dam-only'- (TaDa) or one 'NanoDam-only'-sample (NanoDam). All damMer parts expect the 'slurm workload manager' on the local system as scripts will be submitted as individual slurm jobs for efficient parallelisation. [See schematic overview.](https://github.com/robertkrautz/NanoDam_analysis/blob/master/20180123_workflow_damMer_v2.pdf)
+The suite of damMer python3 scripts automates the application of the damidseq_pipeline across a multitude of TaDa- or NanoDam-samples by performing all pairwise comparisons between (1.) one 'Dam-fusion'- (TaDa) or one 'NanoDam-tagged protein'-sample (NanoDam) and (2.) one 'Dam-only'- (TaDa) or one 'NanoDam-only'-sample (NanoDam). All damMer parts expect the 'slurm workload manager' on the local system as scripts will be submitted as individual slurm jobs for efficient parallelisation. ![See schematic overview.](https://github.com/robertkrautz/NanoDam_analysis/blob/master/20180123_workflow_damMer_v2.pdf)
 
 ### [1.] 'damMer.py'
 
@@ -64,9 +64,3 @@ python3 damMer_tracks.py -r ${dirs[@]} -o *output_folder_name* -p *Dam_fusion_pr
 -d / --defaults Load defaults for species of interest.
 -f / --feedback Complete mail address to receive slurm feedback.
 ```
-
-<object data="https://github.com/robertkrautz/NanoDam_analysis/blob/master/20180123_workflow_damMer_v2.pdf" type="application/pdf" width="700px" height="3000px">
-    <embed src="https://github.com/robertkrautz/NanoDam_analysis/blob/master/20180123_workflow_damMer_v2.pdf">
-        <p>This browser does not support PDFs. Please download the PDF to view it: <a href="https://github.com/robertkrautz/NanoDam_analysis/blob/master/20180123_workflow_damMer_v2.pdf">Download PDF</a>.</p>
-    </embed>
-</object>
