@@ -64,3 +64,8 @@ python3 damMer_tracks.py -r ${dirs[@]} -o *output_folder_name* -p *Dam_fusion_pr
 -d / --defaults Load defaults for species of interest.
 -f / --feedback Complete mail address to receive slurm feedback.
 ```
+
+#### [2.3.] 'damMer_tracks.py' output
+
+Two output folders with names based on indicated prefix preceded by "\*_DamOnly_tracks" and "\*_tracks"
+including '\*.bedgraph' files from all included subdirectories (i.e., '\*_vs_\*'), quantile normalized tracks and an average of all quantile normalized files as well as bigwig files of all bedgraph counterparts
