@@ -89,7 +89,7 @@ python3 damMer_peaks.py -r ${dirs[@]} -o *output_folder_name*
 
 #### [3.3.] 'damMer_peaks.py' output
 
-Similar to 'damMer_tracks.py', two subdirectories will be generated, named according to the indicated prefix ('--out') preceded by '\*\_DamOnly\_peaks' or '\*\_peaks'. They include copies of the '\*.broadPeak'-files from all chosen subdirectories ('--repos') and their '\*.mergePeak'- and  '\*.reproPeak'-derivatives. For each of the 41 predefined FDR-thresholds (i.e., 0 - 2000; -log10-normalized), all merged peaks are enlisted in the corresponding '\*FDR\*.mergePeak'-files (e.g., '75.mergePeak'; bed-format) and the reproducible peaks, present in ≥50% of all pairwise comparisons, are enlisted in the '\*FDR\*.reproPeak' (e.g., '75.reproPeak'; bedgraph-format). '\*.mergePeak'-files allow discrimination of non-/reproducible peaks by color (i.e., red/blue) when loaded into a GenomeBrowser.
+Similar to 'damMer_tracks.py', two subdirectories will be generated, named according to the indicated prefix ('--out') preceded by '\*\_DamOnly\_peaks' or '\*\_peaks'. They include copies of the '\*.broadPeak'-files from all chosen subdirectories ('--repos') and their '\*.mergePeak'- and  '\*.reproPeak'-derivatives. For each of the 41 predefined FDR-thresholds (i.e., 0 - 2000; -log10-normalized), all merged peaks are enlisted in the corresponding '\*FDR\*.mergePeak'-files (e.g., '75.mergePeak'; bed-format) and the reproducible peaks, present in ≥50% of all pairwise comparisons, are enlisted in the '\*FDR\*.reproPeak' (e.g., '75.reproPeak'; bedgraph-format). '\*.mergePeak'-files allow discrimination of non-/reproducible peaks by color (i.e., red/blue) when loaded into a Genome Browser.
 
 ## R markdowns
 
@@ -97,10 +97,22 @@ All custom R markdowns are based on tidyverse to ensure transparency in the anal
 
 The set of markdowns should be contained in a separate R project directory with the corresponding '\*.Rproj'-file in the root as this is required for the relative paths specified with the here package. Additional subdirectories, i.e., 'resources', 'results', 'data', should be created before running through the analyses. Processed files from running the suite of damMer scripts or from the NCBI Gene Expression Omnibus (accession code: GSE190210) should be placed in the 'data'-subdirectory.
 
-## [4.] 'create_annotations.Rmd'
+## [4.] 'genomewide_correlation.Rmd'
+
+Pearson correlation coefficients for pairwise comparisons of the genomewide, binned Chronophage-signal from all individual TaDa and NanoDam libraries (i.e., '\*.bgr'-files) was calculated and visualized as correlation matrix.
+
+## [6.] 'create_annotations.Rmd'
 
 Employs biomaRt to acquire a complete set of annotations for transcription start sites (TSSs) in the _Drosophila melanogaster_ genome belonging to protein-coding genes ("BDGP6.bm.TssBiomart.ProteinCoding").
 
-## [5.] 'cluster_peaks.Rmd'
+## [7.] 'cluster_peaks.Rmd'
 
-Binding intensities are aggregated over peaks derived from DichaeteGFP, GrainyheadGFP and EyelessGFP via the custom 'aggregator()'-function.
+Binding intensities are aggregated over peaks derived from DichaeteGFP, GrainyheadGFP and EyelessGFP via the custom 'aggregator()'-function. After identifying the optimal number of clusters and an optimisation of the clustering procedure based on silhouette widths as read-out, peaks were clustered via stats::kmeans() into 6 clusters based on the quantified binding intensities of Dichaete, Grainyhead and Eyeless. Peaks were sorted according to their respective silhouettes in the visualizations. For convenient tracking of the peaks and their cluster association in a Genome Browser, a bed-file with cluster-based color coding was created.
+
+## [8.] 'annotate_peaks.Rmd'
+
+Peaks were annotated to the nearest TSS of protein-coding genes on the linear genome and subsetted for peaks associated with genes encoding for transcription factors  (TFs). The latter was based on the curated list of TFs from the [_Drosophila_ Transcription Factor Database](https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html).
+
+## [9.] 'scRNAseq_analysis.Rmd'
+
+The two single cell replicates were first processed individually with [Seurat v2.3.4.](https://cran.r-project.org/src/contrib/Archive/Seurat/) before integrating them via _canonical correlation analysis_ (CCA). Dimensionality reduction (i.e., tSNE, UMAP) and cluster definitions were based on 10 dimensions of the aligned CCA. Identification of cluster-specific transcription factors especially for the Type II Neural Stem Cell-derived Intermediate Progenitors (INPs) preceded an overlap of the functional, NanoDam-derived TFs with the TFs detected to be expressed in INPs.
