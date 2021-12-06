@@ -71,7 +71,7 @@ Two output folders will be generated with names based on the indicated prefix ('
 
 #### [3.] 'damMer_peaks.py'
 
-In the third part of the workflow - 'damMer_peaks.py' - the presence of all '\*.broadPeak'-files in the chosen subdirectories is ensured before copying them in separate '\*\_DamOnly\_peaks' and '\*\_peaks'-folders. Peaks will be thresholded according to their __*false discovery rate*__, sorted and merged. At last, reproducible peaks are identified based on their appearance in $\geq$ 50% across all initial '\*.broadPeak'-files based on all individual, pairwise comparisons.
+In the third part of the workflow - 'damMer_peaks.py' - the presence of all '\*.broadPeak'-files in the chosen subdirectories is ensured before copying them in separate '\*\_DamOnly\_peaks' and '\*\_peaks'-folders. Peaks will be thresholded according to their __*false discovery rate*__, sorted and merged. At last, reproducible peaks are identified based on their appearance in ≥50% across all initial '\*.broadPeak'-files based on all individual, pairwise comparisons.
 
 The list of directories used in 'damMer_tracks.py' ('--repos') either in consecutive order or as a shell array need to be specified together with a prefix for the output folder ('--out') when invoking 'damMer_peaks.py'.
 
@@ -89,4 +89,18 @@ python3 damMer_peaks.py -r ${dirs[@]} -o *output_folder_name*
 
 #### [3.3.] 'damMer_peaks.py' output
 
-Similar to 'damMer_tracks.py', two subdirectories will be generated, named according to the indicated prefix ('--out') preceded by '\*\_DamOnly\_peaks' or '\*\_peaks'. They include copies of the '\*.broadPeak'-files from all chosen subdirectories ('--repos') and their '\*.mergePeak'- and  '\*.reproPeak'-derivatives. For each of the 41 predefined FDR-thresholds (i.e., 0 - 2000; -log10-normalized), all merged peaks are enlisted in the corresponding '\*FDR\*.mergePeak'-files (e.g., '75.mergePeak'; bed-format) and the reproducible peaks, present in $\geq$ 50% of all pairwise comparisons, are enlisted in the '\*FDR\*.reproPeak' (e.g., '75.reproPeak'; bedgraph-format).
+Similar to 'damMer_tracks.py', two subdirectories will be generated, named according to the indicated prefix ('--out') preceded by '\*\_DamOnly\_peaks' or '\*\_peaks'. They include copies of the '\*.broadPeak'-files from all chosen subdirectories ('--repos') and their '\*.mergePeak'- and  '\*.reproPeak'-derivatives. For each of the 41 predefined FDR-thresholds (i.e., 0 - 2000; -log10-normalized), all merged peaks are enlisted in the corresponding '\*FDR\*.mergePeak'-files (e.g., '75.mergePeak'; bed-format) and the reproducible peaks, present in ≥50% of all pairwise comparisons, are enlisted in the '\*FDR\*.reproPeak' (e.g., '75.reproPeak'; bedgraph-format). '\*.mergePeak'-files allow discrimination of non-/reproducible peaks by color (i.e., red/blue) when loaded into a GenomeBrowser.
+
+## R markdowns
+
+All custom R markdowns are based on tidyverse to ensure transparency in the analytic workflows and exceptions are only made when absolutely necessary. Code is written explicitly with e.g., functions preceding R library names (e.g., 'dplyr::pull()') and all markdowns are as self-contained as possible. Crucial objects are saved as '\*.rds' to avoid rerunning time-consuming calculations or to load the objects in subsequent R markdowns.
+
+The set of markdowns should be contained in a separate R project directory with the corresponding '\*.Rproj'-file in the root as this is required for the relative paths specified with the here package. Additional subdirectories, i.e., 'resources', 'results', 'data', should be created before running through the analyses. Processed files from running the suite of damMer scripts or from the NCBI Gene Expression Omnibus (accession code: GSE190210) should be placed in the 'data'-subdirectory.
+
+## [4.] 'create_annotations.Rmd'
+
+Employs biomaRt to acquire a complete set of annotations for transcription start sites (TSSs) in the _Drosophila melanogaster_ genome belonging to protein-coding genes ("BDGP6.bm.TssBiomart.ProteinCoding").
+
+## [5.] 'cluster_peaks.Rmd'
+
+Binding intensities are aggregated over peaks derived from DichaeteGFP, GrainyheadGFP and EyelessGFP via the custom 'aggregator()'-function.
