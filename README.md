@@ -67,5 +67,26 @@ python3 damMer_tracks.py -r ${dirs[@]} -o *output_folder_name* -p *Dam_fusion_pr
 
 #### [2.3.] 'damMer_tracks.py' output
 
-Two output folders with names based on indicated prefix preceded by "\*_DamOnly_tracks" and "\*_tracks"
-including '\*.bedgraph' files from all included subdirectories (i.e., '\*_vs_\*'), quantile normalized tracks and an average of all quantile normalized files as well as bigwig files of all bedgraph counterparts
+Two output folders will be generated with names based on the indicated prefix ('--out') preceded by either '\*\_DamOnly\_tracks' or '\*\_tracks'. The latter includes '\*.bedgraph' files copied from all included subdirectories ('--repos', i.e., '\*\_vs\_\*') before and after quantile normalization, an average of all quantile normalized files in '\*.bedgraph'-format as well as '\*.bigwig'-files after conversion of all '\*.bedgraph's. In parallel, all chosen subdirectories will include the results from MACS2, e.g., '\*_peaks.broadPeak'.
+
+#### [3.] 'damMer_peaks.py'
+
+In the third part of the workflow - 'damMer_peaks.py' - the presence of all '\*.broadPeak'-files in the chosen subdirectories is ensured before copying them in separate '\*\_DamOnly\_peaks' and '\*\_peaks'-folders. Peaks will be thresholded according to their __*false discovery rate*__, sorted and merged. At last, reproducible peaks are identified based on their appearance in $\geq$ 50% across all initial '\*.broadPeak'-files based on all individual, pairwise comparisons.
+
+The list of directories used in 'damMer_tracks.py' ('--repos') either in consecutive order or as a shell array need to be specified together with a prefix for the output folder ('--out') when invoking 'damMer_peaks.py'.
+
+#### [2.1.] 'damMer__peaks.py' usage
+```
+dirs=($(find . -type f -iname "*_vs_*"))
+python3 damMer_peaks.py -r ${dirs[@]} -o *output_folder_name*
+```
+
+#### [3.2.] 'damMer_peaks.py' arguments
+```
+-r / --repos  List of repositories (i.e., directories).
+-o / --out    Directory for output.
+```
+
+#### [3.3.] 'damMer_peaks.py' output
+
+Similar to 'damMer_tracks.py', two subdirectories will be generated, named according to the indicated prefix ('--out') preceded by '\*\_DamOnly\_peaks' or '\*\_peaks'. They include copies of the '\*.broadPeak'-files from all chosen subdirectories ('--repos') and their '\*.mergePeak'- and  '\*.reproPeak'-derivatives. For each of the 41 predefined FDR-thresholds (i.e., 0 - 2000; -log10-normalized), all merged peaks are enlisted in the corresponding '\*FDR\*.mergePeak'-files (e.g., '75.mergePeak'; bed-format) and the reproducible peaks, present in $\geq$ 50% of all pairwise comparisons, are enlisted in the '\*FDR\*.reproPeak' (e.g., '75.reproPeak'; bedgraph-format).
