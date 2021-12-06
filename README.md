@@ -99,7 +99,11 @@ The set of markdowns should be contained in a separate R project directory with 
 
 ## [4.] 'genomewide_correlation.Rmd'
 
-Pearson correlation coefficients for pairwise comparisons of the genomewide, binned Chronophage-signal from all individual TaDa and NanoDam libraries (i.e., '\*.bgr'-files) was calculated and visualized as correlation matrix.
+Pearson correlation coefficients for pairwise comparisons of the genomewide, binned Chronophage-signal from all individual TaDa and NanoDam libraries (i.e., '\*.bgr'-files) was calculated and visualized as correlation matrix. The complexities of these libraries were analysed via fingerprints plots with the custom fingerPrep() function. In parallel, a correlation analysis was also performed for genomewide binding signals separated by GATC-fragments and normalized to DamOnly background signal (e.g., 'Cph_NanoDam_1_vs_Dam_NanoDam_1.bedgraph').
+
+## [5.] 'signal_enrichment.Rmd'
+
+Binding signal of Chronophage as detected by TaDa or NanoDam was quantified on peaksets derived from TaDa, NanoDam or their combination with the help of a custom extract_matrix() function. To assess the reproducibility between the peaksets from individual pairwise comparisons from either TaDa or NanoDam with each other a ROC-curve like analysis was performed.
 
 ## [6.] 'create_annotations.Rmd'
 
@@ -111,7 +115,7 @@ Binding intensities are aggregated over peaks derived from DichaeteGFP, Grainyhe
 
 ## [8.] 'annotate_peaks.Rmd'
 
-Peaks were annotated to the nearest TSS of protein-coding genes on the linear genome and subsetted for peaks associated with genes encoding for transcription factors  (TFs). The latter was based on the curated list of TFs from the [_Drosophila_ Transcription Factor Database](https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html).
+Peaks were annotated to the nearest TSS of protein-coding genes on the linear genome via a custom annotater() function based on the 'bedr'-package and subsetted for peaks associated with genes encoding for transcription factors  (TFs). The latter was based on the curated list of TFs from the [_Drosophila_ Transcription Factor Database](https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html).
 
 ## [9.] 'scRNAseq_analysis.Rmd'
 
