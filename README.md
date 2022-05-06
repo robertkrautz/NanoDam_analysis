@@ -1,10 +1,10 @@
 # NanoDam_analysis
 
-This repository comprises R markdowns & python scripts accompanying the preview article:
+This repository comprises R markdowns & python scripts accompanying the corresponding article in Developmental Cell:
 
 **Tang JLY, Hakes AE, Krautz R, Suzuki T, Contreras EG, Fox PM, Brand AH**
-*NanoDam identifies novel temporal transcription factors conserved between the Drosophila central brain and visual system*
-doi: [https://doi.org/10.1101/2021.06.07.447332](https://doi.org/10.1101/2021.06.07.447332)
+*NanoDam identifies Homeobrain (ARX) and Scarecrow (NKX2.1) as conserved temporal factors in the Drosophila central brain and visual system*
+Dev Cell. 2022 Apr 21:S1534-5807(22)00248-9. doi: [doi.org/10.1016/j.devcel.2022.04.008](https://doi.org/10.1016/j.devcel.2022.04.008). PMID: 35483359.
 
 ## Running damMer
 
@@ -115,7 +115,7 @@ Binding intensities are aggregated over peaks derived from DichaeteGFP, Grainyhe
 
 ## [8.] 'annotate_peaks.Rmd'
 
-Peaks were annotated to the nearest TSS of protein-coding genes on the linear genome via a custom annotater() function based on the 'bedr'-package and subsetted for peaks associated with genes encoding for transcription factors  (TFs). The latter was based on the curated list of TFs from the [_Drosophila_ Transcription Factor Database](https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html).
+Peaks were annotated to the nearest TSS of protein-coding genes on the linear genome via a custom annotater() function based on the 'bedr'-package and subsetted for peaks associated with genes encoding for transcription factors  (TFs). The latter was based on the curated list of TFs from the [Drosophila_ Transcription Factor Database](https://www.mrc-lmb.cam.ac.uk/genomes/FlyTF/old_index.html).
 
 ## [9.] 'scRNAseq_analysis.Rmd'
 
