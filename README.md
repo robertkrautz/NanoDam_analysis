@@ -37,7 +37,7 @@ python3 damMer.py -e ${exp[@]} -c ${dam[@]} -i /path/to/index -g /path/to/file.G
 
 #### [1.3.] 'damMer.py' output
 
-For every pairwise comparison, one subdirectory with the results from the damidseq_pipeline_vR.1.pl will be created, including individual '\*.bedgraph'-files enlisting the normalized, genomewide binding intensities of the DNA/chromatin-binding protein of interest. As filenames will be changed while running 'damMer_tracks.py', it is recommended to not change them manually. All arguments & parameters will be logged in a '*.log'-file. All shell scripts submitted by 'damMer.py' are kept for full transparency, too.
+For every pairwise comparison, one subdirectory with the results from the 'damidseq_pipeline_vR.1.pl' will be created, including individual '\*.bedgraph'-files enlisting the normalized, genomewide binding intensities of the DNA/chromatin-binding protein of interest. As filenames will be changed while running 'damMer_tracks.py', it is recommended to not change them manually. All arguments & parameters will be logged in a '*.log'-file. All shell scripts submitted by 'damMer.py' are kept for full transparency, too.
 
 ### [2.] 'damMer_tracks.py'
 
