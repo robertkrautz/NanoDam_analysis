@@ -99,7 +99,7 @@ The set of markdowns should be contained in a separate R project directory with 
 
 ## [4.] 'genomewide_correlation.Rmd'
 
-Pearson correlation coefficients for pairwise comparisons of the genomewide, binned Chronophage-signal from all individual TaDa and NanoDam libraries (i.e., '\*.bgr'-files) was calculated and visualized as correlation matrix. The complexities of these libraries were analysed via fingerprints plots with the custom fingerPrep() function. In parallel, a correlation analysis was also performed for genomewide binding signals separated by GATC-fragments and normalized to DamOnly background signal (e.g., 'Cph_NanoDam_1_vs_Dam_NanoDam_1.bedgraph').
+Pearson correlation coefficients for pairwise comparisons of the genomewide, binned Chronophage-signal from all individual TaDa and NanoDam libraries (i.e., '\*.bgr'-files) were calculated and visualized as correlation matrix. The complexities of these libraries were analysed via fingerprints plots with the custom fingerPrep() function. In parallel, a correlation analysis was also performed for genomewide binding signals separated by GATC-fragments and normalized to DamOnly background signal (e.g., 'Cph_NanoDam_1_vs_Dam_NanoDam_1.bedgraph').
 
 ## [5.] 'signal_enrichment.Rmd'
 
