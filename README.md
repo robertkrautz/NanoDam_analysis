@@ -75,7 +75,7 @@ In the third part of the workflow - 'damMer_peaks.py' - the presence of all '\*.
 
 The list of directories used in 'damMer_tracks.py' ('--repos') either in consecutive order or as a shell array need to be specified together with a prefix for the output folder ('--out') when invoking 'damMer_peaks.py'.
 
-#### [2.1.] 'damMer__peaks.py' usage
+#### [2.1.] 'damMer_peaks.py' usage
 ```
 dirs=($(find . -type f -iname "*_vs_*"))
 python3 damMer_peaks.py -r ${dirs[@]} -o *output_folder_name*
